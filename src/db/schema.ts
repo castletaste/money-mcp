@@ -10,6 +10,11 @@ import {
 } from "drizzle-orm/pg-core";
 
 const SCHEMA_NAME = process.env.MCP_MONEY_SCHEMA ?? "mcp_money";
+if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(SCHEMA_NAME)) {
+  throw new Error(
+    `Invalid schema name: "${SCHEMA_NAME}". Must match [a-zA-Z_][a-zA-Z0-9_]*`,
+  );
+}
 
 export const schema = pgSchema(SCHEMA_NAME);
 

@@ -238,9 +238,9 @@ export function registerTransactionTools(server: McpServer, db: Database) {
         conditions.push(gte(transactions.date, new Date(params.date_from)));
       }
       if (params.date_to) {
-        // Add one day to make end date inclusive of the full day
+        // Add one day to make end date inclusive of the full day (UTC to avoid DST issues)
         const endDate = new Date(params.date_to);
-        endDate.setDate(endDate.getDate() + 1);
+        endDate.setUTCDate(endDate.getUTCDate() + 1);
         conditions.push(lt(transactions.date, endDate));
       }
       if (params.category_id) {
@@ -443,12 +443,21 @@ export function registerTransactionTools(server: McpServer, db: Database) {
         const effectiveType = params.type ?? categoryType;
 
         if (params.amount !== undefined) {
-          const signedAmount =
-            effectiveType === "income" ? params.amount : -params.amount;
-          updates.amount = signedAmount.toFixed(4);
+          if (effectiveType !== null) {
+            const signedAmount =
+              effectiveType === "income" ? params.amount : -params.amount;
+            updates.amount = signedAmount.toFixed(4);
+          } else {
+            // No type info available - preserve existing sign convention
+            const existingIsIncome = !existing[0].amount.startsWith("-");
+            const signedAmount = existingIsIncome
+              ? params.amount
+              : -params.amount;
+            updates.amount = signedAmount.toFixed(4);
+          }
         } else if (
-          params.category_id !== undefined ||
-          params.type !== undefined
+          (params.category_id !== undefined || params.type !== undefined) &&
+          effectiveType !== null
         ) {
           // Category or type changed but amount not provided - re-sign using string ops to avoid float precision loss
           const rawAmount = existing[0].amount;

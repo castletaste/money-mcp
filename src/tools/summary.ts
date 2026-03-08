@@ -20,9 +20,9 @@ export function registerSummaryTools(server: McpServer, db: Database) {
         .describe("Filter by category ID"),
     },
     async (params) => {
-      // Add one day to date_to to make end date inclusive of the full day
+      // Add one day to date_to to make end date inclusive of the full day (UTC to avoid DST issues)
       const endDate = new Date(params.date_to);
-      endDate.setDate(endDate.getDate() + 1);
+      endDate.setUTCDate(endDate.getUTCDate() + 1);
 
       const conditions = [
         gte(transactions.date, new Date(params.date_from)),

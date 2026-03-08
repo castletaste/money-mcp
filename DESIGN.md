@@ -642,7 +642,7 @@ and it's stored in your PostgreSQL database — with categories, budgets, and sp
 **Goals**: Schema, migrations, DB connection.
 
 **Tasks**:
-- Define Drizzle schema in `src/db/schema.ts` (3 tables: categories, transactions, budgets)
+- Define Drizzle schema in `src/db/schema.ts` (5 tables: categories, tags, transactions, transaction_tags, budgets)
 - Implement auto-migration system with version tracking
 - Implement DB connection with `DATABASE_URL`
 - Seed ~10 default categories
@@ -674,19 +674,22 @@ and it's stored in your PostgreSQL database — with categories, budgets, and sp
 
 ## Phase 3: Core Tools (Day 4-7)
 
-**Goals**: All 11 MVP tools working.
+**Goals**: All 13 MVP tools working.
 
 **Tasks**:
-- `add_transaction` — with amount, description, date, category
-- `list_transactions` — with filters: date range, category, limit
-- `update_transaction` — update any field
+- `add_transaction` — with amount, description, date, category, tags
+- `list_transactions` — with filters: date range, category, tag, limit
+- `update_transaction` — update any field including tags
 - `delete_transaction` — by ID
 - `get_summary` — spending by category for a period, totals, averages
 - `list_categories` — all categories
 - `create_category` — custom category
+- `list_tags` — all tags
+- `create_tag` — add a new tag
 - `set_budget` — monthly budget for a category
 - `get_budget_status` — actual vs budget for current month
 - `set_currency` — change default currency for new transactions
+- `health_check` — DB status, version, stats
 - Integration tests + E2E MCP protocol tests for each tool
 
 **Deliverables**: All tools work end-to-end with real Postgres.
@@ -722,7 +725,6 @@ and it's stored in your PostgreSQL database — with categories, budgets, and sp
 **Tasks** (tentative, driven by feedback):
 - Accounts support (optional FK on transactions, list/create tools)
 - Recurring transactions
-- Tags
 - CSV import/export
 - Spending trends over time
 - Multi-currency with optional conversion

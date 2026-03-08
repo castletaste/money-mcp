@@ -32,9 +32,9 @@
 
 ### Recommendation
 
-- **MVP**: **B — Practical**. Transactions + categories + accounts + summaries + basic budgets. This is the minimum to be *useful*, not just a demo.
+- **✅ Decision**: **B — Practical, without accounts**. Transactions + categories + summaries + basic budgets. Accounts removed to simplify MVP — can be added in v1.1 if users request separating cash/bank/card.
 - **Backup**: A — if time is tight, ship without budgets. Summaries are non-negotiable.
-- **Defer**: Multi-currency (see section 10), recurring, tags, import/export.
+- **Defer**: Accounts, multi-currency (see section 10), recurring, tags, import/export.
 
 ---
 
@@ -111,13 +111,14 @@
 | Entity | MVP? | Complexity | Value |
 |--------|------|-----------|-------|
 | **transactions** | Yes | Low | Critical |
-| **accounts** | Yes | Low | High — separates cash/bank/card |
+| **accounts** | ~~Yes~~ **No** | Low | Medium — deferred, simplifies MVP |
 | **categories** | Yes | Low-Med | High |
 | **budgets** | Yes (basic) | Medium | High |
 | **recurring_transactions** | No | High | Medium |
 | **tags** | No | Low | Low-Medium |
 | **currencies** | No | High | Medium |
-| **audit/edit history** | No | Medium | Low for v1 |
+
+> **Decision**: Accounts removed from MVP. Transactions stand alone. If needed later, accounts can be added as an optional FK on transactions.
 
 ### Schema variants
 
@@ -128,17 +129,9 @@
 | **C. Normalized + JSONB** | B + JSONB `metadata` column on transactions for extensibility | 6/10 | 9/10 | 7/10 |
 | **D. Event-sourced** | Append-only events, materialized views for balances | 3/10 | 10/10 | 5/10 |
 
-### Recommended MVP schema (Variant B+C hybrid)
+### ✅ Final MVP schema (Variant B, no accounts)
 
 ```
-mcp_money.accounts
-  id          uuid PK
-  name        text NOT NULL
-  type        text NOT NULL  -- 'checking', 'savings', 'cash', 'credit_card'
-  currency    text NOT NULL DEFAULT 'USD'
-  created_at  timestamptz
-  updated_at  timestamptz
-
 mcp_money.categories
   id          uuid PK
   name        text NOT NULL UNIQUE
@@ -148,7 +141,6 @@ mcp_money.categories
 
 mcp_money.transactions
   id          uuid PK
-  account_id  uuid FK -> accounts(id)
   category_id uuid FK -> categories(id) NULLABLE
   amount      numeric(19,4) NOT NULL  -- positive = income, negative = expense
   currency    text NOT NULL DEFAULT 'USD'
@@ -167,10 +159,11 @@ mcp_money.budgets
   created_at  timestamptz
 ```
 
-### Recommendation
+### Decision
 
-- **MVP**: Variant B with a `metadata jsonb` column on transactions for future flexibility. 4 tables: accounts, categories, transactions, budgets.
-- **Defer**: tags (use metadata jsonb for now), recurring_transactions, audit history, multi-currency conversion.
+- **MVP**: Variant B — 3 tables: categories, transactions, budgets. No accounts table.
+- **Currency column** kept on transactions for future multi-currency expansion (section 10).
+- **Defer**: accounts, tags (use metadata jsonb for now), recurring_transactions, multi-currency conversion.
 - **Critical**: Use `numeric(19,4)` for money, never float. Use UUID v7 for time-sortable IDs. Use `date` not `timestamp` for transaction dates (you don't need sub-day precision for "I bought coffee").
 - **Convention**: Negative amounts = expense, positive = income. This is simpler than separate `type` + positive amount.
 
@@ -205,7 +198,7 @@ mcp_money.budgets
 | Tool | Purpose | MVP? |
 |------|---------|------|
 | `add_transaction` | Log expense or income | Yes |
-| `list_transactions` | Query with filters (date range, category, account) | Yes |
+| `list_transactions` | Query with filters (date range, category) | Yes |
 | `delete_transaction` | Remove a transaction | Yes |
 | `get_summary` | Spending summary by period/category | Yes |
 | `list_categories` | Show available categories | Yes |
@@ -242,12 +235,27 @@ All of C, plus transfer_between_accounts, set_goal, get_forecast, add_tag, merge
 
 **Critical take**: Every tool you add is a tool the LLM has to understand and choose from. More tools = more token usage per call = slower responses = worse UX. Keep the tool list tight.
 
-### Recommendation
+### ✅ Decision: Variant B adapted — 9 tools (no accounts)
 
-- **MVP**: **Variant B — 11 tools**. This is the minimum to be a useful daily tracker, not a toy demo.
-- **Key insight**: `get_summary` is the most important tool after `add_transaction`. Without summaries, the server is just a dumb INSERT machine. The LLM should be able to say "You spent $450 on food this month, 20% over budget."
-- **Defer**: Recurring, trends, import/export, search. All are v1.1+.
-- **Cut aggressively**: Don't build `undo_last`. The LLM can call `delete_transaction` or `update_transaction`.
+Since accounts are removed from MVP, the final tool list:
+
+| Tool | Purpose |
+|------|---------|
+| `add_transaction` | Log expense or income |
+| `list_transactions` | Query with filters (date range, category, limit) |
+| `update_transaction` | Edit existing transaction |
+| `delete_transaction` | Remove a transaction |
+| `get_summary` | Spending by category for a period, totals, averages |
+| `list_categories` | Show available categories |
+| `create_category` | Add custom category |
+| `set_budget` | Set monthly budget for category |
+| `get_budget_status` | Check budget vs actual spending |
+| `set_currency` | Change default currency for new transactions |
+| `health_check` | Report DB status, version, stats |
+
+**Key insight**: `get_summary` is the most important tool after `add_transaction`. Without summaries, the server is just a dumb INSERT machine. The LLM should be able to say "You spent $450 on food this month, 20% over budget."
+
+**Defer**: Recurring, trends, import/export, search. All are v1.1+.
 
 ---
 
@@ -261,7 +269,7 @@ All of C, plus transfer_between_accounts, set_goal, get_forecast, add_tag, merge
 | **B. Seed defaults + user-defined** | Ship 15-20 common categories, user can add more | 9/10 | 9/10 |
 | **C. Hierarchical categories** | Parent/child (Food > Restaurants, Groceries) | 5/10 | 8/10 |
 
-**Recommendation**: **B for MVP** — seed defaults (Groceries, Restaurants, Transport, Entertainment, Utilities, Rent, Salary, etc.). Allow users to add custom ones. One level of nesting max (parent_id), but don't enforce hierarchy in v1 — just support it in schema.
+**✅ Decision**: **B for MVP but fewer presets** — seed ~10 defaults (Groceries, Restaurants, Transport, Entertainment, Utilities, Rent, Salary, Healthcare, Shopping, Other). Allow users to add custom ones via `create_category` tool. One level of nesting max (parent_id), but don't enforce hierarchy in v1 — just support it in schema.
 
 ### Budgets
 
@@ -351,9 +359,10 @@ All of C, plus transfer_between_accounts, set_goal, get_forecast, add_tag, merge
 
 That's it. You don't need a config file for 3 settings.
 
-### Recommendation
+### ✅ Decision: A+C hybrid — env vars + CLI flags, currency via tool
 
-- **MVP**: **A+C hybrid — env vars + a few CLI flags**. `DATABASE_URL` is the only required config. Optional: `MCP_MONEY_CURRENCY=EUR`, `MCP_MONEY_SCHEMA=mcp_money`. That's it.
+- `DATABASE_URL` is the only required config. Optional: `MCP_MONEY_SCHEMA=mcp_money` env var.
+- **Currency is changed via the `set_currency` MCP tool**, not an env var. This lets the LLM change it conversationally ("switch to EUR"). Default: `USD`. Stored in a `mcp_money.settings` key-value row or in-memory with persistence.
 - **Defer**: Config files. You don't need them until you have 10+ settings.
 - **Rule**: If you can't justify a config option with a real user scenario, don't add it.
 
@@ -370,12 +379,12 @@ That's it. You don't need a config file for 3 settings.
 
 **Critical take**: For an MCP server, the most valuable tests are integration tests that verify: tool call → SQL → correct response. Unit testing individual SQL queries without a DB is low-value.
 
-### Recommendation
+### ✅ Decision: C — Integration + E2E MCP tests
 
-- **MVP**: **B — Integration tests with a test Postgres**. Use `bun test` with a test database. Each test suite creates a fresh schema, runs tools, asserts results.
+- **Integration tests** with a test Postgres via `bun test`. Each test suite creates a fresh schema, runs tools, asserts results.
+- **E2E MCP protocol tests**: test full MCP round-trips (tool call → JSON-RPC → response). Validates that tool schemas, transport, and responses work correctly end-to-end.
 - **Require**: docker-compose for test Postgres (or use existing local Postgres).
-- **Key tests**: add_transaction → list_transactions round-trip, get_summary correctness, budget status calculations.
-- **Defer**: E2E MCP protocol tests (the SDK handles transport), snapshot tests.
+- **Key tests**: add_transaction → list_transactions round-trip, get_summary correctness, budget status calculations, MCP protocol compliance.
 
 ---
 
@@ -566,22 +575,25 @@ and it's stored in your PostgreSQL database — with categories, budgets, and sp
 
 ---
 
-# Final Recommendation
+# Final Decisions
 
 | Aspect | Decision |
 |--------|----------|
-| **Positioning** | Expense tracker for AI assistants |
-| **MVP scope** | Transactions + accounts + categories + summaries + basic budgets (11 tools) |
-| **Runtime** | Bun-primary, Node-compatible (no Bun-specific APIs in production code) |
-| **MCP transport** | stdio only via `@modelcontextprotocol/sdk` |
-| **Database** | PostgreSQL only, via Drizzle ORM + postgres.js driver |
-| **Schema** | 4 tables: accounts, categories, transactions, budgets. All in `mcp_money` schema. |
-| **Migrations** | Auto-migrate on startup with version tracking |
-| **Config** | `DATABASE_URL` required. `MCP_MONEY_CURRENCY`, `MCP_MONEY_SCHEMA` optional env vars. |
-| **Testing** | Integration tests with real Postgres via `bun test` |
-| **Security** | Schema isolation + parameterized queries |
-| **Packaging** | npm package, run via `npx mcp-money` |
-| **Launch** | MCP directories → Reddit → HN (in that order) |
+| **Positioning** | B — Expense tracker for AI assistants |
+| **MVP scope** | B adapted — Transactions + categories + summaries + basic budgets (9 tools + health_check + set_currency). **No accounts.** |
+| **Runtime** | C — Bun-primary, Node-compatible (no Bun-specific APIs in production code) |
+| **MCP transport** | A — stdio only via `@modelcontextprotocol/sdk` |
+| **Database** | A — PostgreSQL only, via Drizzle ORM + postgres.js driver |
+| **Schema** | B — 3 tables: categories, transactions, budgets. All in `mcp_money` schema. Currency column kept for future expansion. |
+| **Migrations** | B — Auto-migrate on startup with version tracking |
+| **Config** | A+C — `DATABASE_URL` required. `MCP_MONEY_SCHEMA` optional env var. **Currency changed via `set_currency` tool**, not env var. |
+| **Testing** | C — Integration tests + E2E MCP protocol tests via `bun test` |
+| **Observability** | A+C+D — stderr logging + SQL query logging (DEBUG) + health_check tool |
+| **Security** | B — Schema isolation + parameterized queries |
+| **Packaging** | A — npm package, run via `npx mcp-money` |
+| **Open-source** | A+D — Solo maintainer with reference implementation quality |
+| **Launch** | D→B→A — MCP directories → Reddit → HN (in that order) |
+| **Naming** | A — `mcp-money` |
 
 ---
 
@@ -612,10 +624,10 @@ and it's stored in your PostgreSQL database — with categories, budgets, and sp
 **Goals**: Schema, migrations, DB connection.
 
 **Tasks**:
-- Define Drizzle schema in `src/db/schema.ts`
+- Define Drizzle schema in `src/db/schema.ts` (3 tables: categories, transactions, budgets)
 - Implement auto-migration system with version tracking
 - Implement DB connection with `DATABASE_URL`
-- Seed default categories
+- Seed ~10 default categories
 - Write integration tests for schema creation and seeding
 
 **Deliverables**: Running `bun run src/db/migrate.ts` creates all tables in a fresh Postgres.
@@ -647,18 +659,17 @@ and it's stored in your PostgreSQL database — with categories, budgets, and sp
 **Goals**: All 11 MVP tools working.
 
 **Tasks**:
-- `add_transaction` — with amount, description, date, category, account
-- `list_transactions` — with filters: date range, category, account, limit
+- `add_transaction` — with amount, description, date, category
+- `list_transactions` — with filters: date range, category, limit
 - `update_transaction` — update any field
 - `delete_transaction` — by ID
 - `get_summary` — spending by category for a period, totals, averages
 - `list_categories` — all categories
 - `create_category` — custom category
-- `list_accounts` — all accounts
-- `create_account` — new account with type and currency
 - `set_budget` — monthly budget for a category
 - `get_budget_status` — actual vs budget for current month
-- Integration tests for each tool
+- `set_currency` — change default currency for new transactions
+- Integration tests + E2E MCP protocol tests for each tool
 
 **Deliverables**: All tools work end-to-end with real Postgres.
 
@@ -691,6 +702,7 @@ and it's stored in your PostgreSQL database — with categories, budgets, and sp
 **Goals**: Respond to real user feedback.
 
 **Tasks** (tentative, driven by feedback):
+- Accounts support (optional FK on transactions, list/create tools)
 - Recurring transactions
 - Tags
 - CSV import/export
@@ -786,25 +798,27 @@ mcp-money/
 │   ├── config.ts             # env var parsing and validation
 │   ├── db/
 │   │   ├── connection.ts     # postgres.js connection
-│   │   ├── schema.ts         # Drizzle table definitions
+│   │   ├── schema.ts         # Drizzle table definitions (3 tables)
 │   │   ├── migrate.ts        # auto-migration runner
-│   │   ├── seed.ts           # default categories
+│   │   ├── seed.ts           # default categories (~10)
 │   │   └── migrations/       # numbered SQL files
 │   │       ├── 001_initial.sql
 │   │       └── ...
 │   └── tools/
 │       ├── index.ts          # tool registry
 │       ├── transactions.ts   # add, list, update, delete
-│       ├── accounts.ts       # list, create
 │       ├── categories.ts     # list, create
 │       ├── budgets.ts        # set, get_status
 │       ├── summary.ts        # get_summary
+│       ├── settings.ts       # set_currency
 │       └── health.ts         # health_check
 ├── tests/
 │   ├── setup.ts              # test DB setup/teardown
 │   ├── transactions.test.ts
 │   ├── budgets.test.ts
-│   └── summary.test.ts
+│   ├── summary.test.ts
+│   └── e2e/
+│       └── mcp-protocol.test.ts  # E2E MCP round-trip tests
 ├── package.json
 ├── tsconfig.json
 ├── drizzle.config.ts
@@ -825,11 +839,11 @@ mcp-money/
 2. Configure tsconfig.json for ESM + both runtimes
 3. Create docker-compose.yml with PostgreSQL 16
 4. Implement `src/config.ts` — parse DATABASE_URL and optional env vars
-5. Define Drizzle schema in `src/db/schema.ts` — all 4 tables
+5. Define Drizzle schema in `src/db/schema.ts` — 3 tables (categories, transactions, budgets)
 6. Implement `src/db/connection.ts` — postgres.js connection pool
 7. Implement `src/db/migrate.ts` — auto-migration with version tracking
 8. Write `src/db/migrations/001_initial.sql` — create schema and tables
-9. Implement `src/db/seed.ts` — default categories
+9. Implement `src/db/seed.ts` — ~10 default categories
 10. Write first integration test: schema creation + seeding
 
 ## Next 10 tasks
@@ -840,10 +854,10 @@ mcp-money/
 14. Implement `list_transactions` tool with filters
 15. Implement `update_transaction` and `delete_transaction` tools
 16. Implement `list_categories` and `create_category` tools
-17. Implement `list_accounts` and `create_account` tools
-18. Implement `get_summary` tool (spending by category/period)
-19. Implement `set_budget` and `get_budget_status` tools
-20. Write integration tests for all tools
+17. Implement `get_summary` tool (spending by category/period)
+18. Implement `set_budget` and `get_budget_status` tools
+19. Implement `set_currency` tool
+20. Write integration tests + E2E MCP protocol tests for all tools
 
 ## Optional later tasks
 
@@ -853,12 +867,13 @@ mcp-money/
 24. Test on Claude Desktop, Claude Code, Cursor
 25. Publish v0.1.0 to npm
 26. Submit to awesome-mcp-servers
-27. Add recurring transactions
-28. Add tags support (via metadata jsonb or dedicated table)
-29. Add CSV export tool
-30. Add spending trends tool
-31. Add multi-currency conversion with external rates API
-32. Add SQLite support via Drizzle dialect
+27. Add accounts support (optional FK on transactions)
+28. Add recurring transactions
+29. Add tags support (via metadata jsonb or dedicated table)
+30. Add CSV export tool
+31. Add spending trends tool
+32. Add multi-currency conversion with external rates API
+33. Add SQLite support via Drizzle dialect
 
 ---
 
@@ -873,34 +888,41 @@ mcp-money/
 | postgres.js driver | Works on both Bun and Node, no native bindings |
 | stdio-only MCP | 95% of MCP usage is stdio, HTTP is premature |
 | Auto-migration on startup | Zero friction for users, critical for adoption |
-| 11 tools in MVP | Minimum to be useful, not just a demo |
+| **No accounts in MVP** | Simplifies schema and tools. Can add later as optional FK. |
+| **9 tools + health_check + set_currency** | Minimum to be useful without account complexity |
 | Negative amounts for expenses | Simpler math, LLM handles presentation |
 | UUID v7 for IDs | Time-sortable, no sequence conflicts |
 | `mcp_money` schema | Isolation without requiring dedicated database |
 | npm package distribution | Standard MCP installation pattern |
 | Monthly-only budgets | 90% use case, simple implementation |
-| Seeded default categories | Better UX than empty start |
+| **~10 seeded default categories** | Better UX than empty start, but not overwhelming |
 | `numeric(19,4)` for money | Never float. Industry standard precision. |
+| **Currency via MCP tool** | More natural than env var — LLM says "switch to EUR" |
+| **Integration + E2E MCP tests** | Full coverage: tool logic + protocol compliance |
+| **Currency column on transactions** | Kept for future multi-currency expansion, even without conversion in v1 |
 
 ## Consciously rejected
 
 | Decision | Reason |
 |----------|--------|
 | SQLite as primary store | User requirement: no local files |
+| **Accounts table in MVP** | Adds complexity without proportional value for v1. Deferred. |
 | Multi-DB support in v1 | Complexity explosion for unproven demand |
 | Double-entry bookkeeping | Scares users, solves wrong problem for personal tracking |
-| Config file | 3 settings don't justify a config file |
+| Config file | 2 settings don't justify a config file |
 | Docker for MCP server | stdio over Docker is awkward |
 | Rate limiting | Absurd for personal finance tool |
 | MCP confirmation for deletes | MCP has no native confirmation mechanism |
 | Structured logging (pino) | Over-engineered for v1 |
 | Event sourcing | 10x complexity for near-zero benefit in personal finance |
 | Plugin system | Premature abstraction |
+| **Currency as env var** | Tool-based approach is more natural for LLM interaction |
 
 ## Deferred to post-MVP
 
 | Feature | When | Trigger |
 |---------|------|---------|
+| **Accounts** | v1.1 | User demand for separating cash/bank/card |
 | Recurring transactions | v1.1 | User demand |
 | Tags | v1.1 | User demand |
 | Multi-currency conversion | v1.2 | User demand + good rate API found |
@@ -915,9 +937,10 @@ mcp-money/
 | Decision | Re-evaluate when |
 |----------|-----------------|
 | PostgreSQL-only | If >30% of issues are "how do I set up Postgres" |
+| No accounts | If >5 users request separating transactions by source |
 | Amount sign convention | If users/LLMs are confused by negative amounts |
 | Auto-migration | If any user reports data loss |
 | Drizzle ORM | If it causes runtime issues on Node |
-| Tool count | If LLMs struggle with 11 tools (reduce) or users ask for more (expand) |
+| Tool count | If LLMs struggle with tools (reduce) or users ask for more (expand) |
 | Monthly-only budgets | If >5 requests for weekly/quarterly |
 | UUID v7 | If any driver compatibility issues |

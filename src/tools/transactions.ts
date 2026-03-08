@@ -488,6 +488,28 @@ export function registerTransactionTools(server: McpServer, db: Database) {
           };
         }
 
+        const hasAnyParam =
+          params.amount !== undefined ||
+          params.type !== undefined ||
+          params.currency !== undefined ||
+          params.category_id !== undefined ||
+          params.description !== undefined ||
+          params.date !== undefined ||
+          params.tags !== undefined ||
+          params.metadata !== undefined;
+
+        if (!hasAnyParam) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text" as const,
+                text: "No fields provided to update",
+              },
+            ],
+          };
+        }
+
         const updates: Record<string, unknown> = {};
 
         // Determine category for sign convention

@@ -1,136 +1,28 @@
 # mcp-money: Architecture Design Document
 
-## 1. Positioning
+## Final Decisions
 
-| Variant | Description | Clarity | Usefulness | Adoption | Stars | Long-term |
-|---------|------------|---------|-----------|----------|-------|-----------|
-| **A. "Personal finance MCP server"** | Generic personal finance tracker via MCP | 7/10 | 7/10 | 6/10 | 5/10 | 5/10 |
-| **B. "Expense tracker for AI assistants"** | Focused on expense/income logging via LLM | 9/10 | 8/10 | 8/10 | 7/10 | 7/10 |
-| **C. "AI-native ledger"** | Double-entry bookkeeping via MCP, like hledger but AI-first | 6/10 | 6/10 | 4/10 | 6/10 | 8/10 |
-| **D. "MCP money memory"** | LLM remembers your spending; conversational finance | 8/10 | 7/10 | 7/10 | 8/10 | 5/10 |
-
-**Tradeoff**: "AI-native ledger" (C) is technically strongest but scares away 80% of users. "MCP money memory" (D) is catchy but gimmicky — risks becoming a toy.
-
-### Recommendation
-
-- **MVP**: **B — "Expense tracker for AI assistants"**. Clear value prop, easy to explain, easy to demo. "Tell Claude what you spent, it remembers and tracks it in PostgreSQL."
-- **Backup**: D — can evolve messaging toward "memory" framing later.
-- **Defer**: C — double-entry is a v2+ feature if demand exists. Don't build hledger.
-
----
-
-## 2. MVP Scope
-
-| Variant | Includes | Excludes | Too weak if... | Too heavy if... |
-|---------|----------|----------|----------------|-----------------|
-| **A. Minimal** | add/list/delete transactions, single currency, flat categories | budgets, recurring, multi-currency, reports, tags | no summaries at all | — |
-| **B. Practical** | A + summaries (by period/category), basic budgets, account support | recurring, multi-currency, tags, import/export | — | — |
-| **C. Feature-rich** | B + recurring transactions, tags, multi-currency, CSV import | advanced reports, forecasting, goals | — | multi-currency in MVP is a trap |
-| **D. Full** | C + audit history, templates, rules, bank integrations | nothing | — | definitely overbuilt for v1 |
-
-**Critical take**: Multi-currency, recurring transactions, and import/export are the three features that feel "obvious" but each adds 2-3 weeks of work and edge cases. They kill MVPs.
-
-### Recommendation
-
-- **✅ Decision**: **B — Practical, without accounts**. Transactions + categories + summaries + basic budgets. Accounts removed to simplify MVP — can be added in v1.1 if users request separating cash/bank/card.
-- **Backup**: A — if time is tight, ship without budgets. Summaries are non-negotiable.
-- **Defer**: Accounts, multi-currency (see section 10), recurring, tags, import/export.
+| Aspect | Decision |
+|--------|----------|
+| **Positioning** | Expense tracker for AI assistants |
+| **MVP scope** | Transactions + categories + tags + summaries + basic budgets (16 tools). No accounts. |
+| **Runtime** | Bun-primary, Node-compatible (no Bun-specific APIs in production code) |
+| **MCP transport** | stdio only via `@modelcontextprotocol/sdk` |
+| **Database** | PostgreSQL only, via Drizzle ORM + postgres.js driver |
+| **Schema** | 5 tables: categories, tags, transactions, transaction_tags, budgets. All in `mcp_money` schema. |
+| **Migrations** | Auto-migrate on startup with version tracking |
+| **Config** | `DATABASE_URL` required. `MCP_MONEY_SCHEMA` optional env var. Currency changed via `set_currency` tool. |
+| **Testing** | Integration tests + E2E MCP protocol tests via `bun test` |
+| **Observability** | stderr logging + SQL query logging (DEBUG) + health_check tool |
+| **Security** | Schema isolation + parameterized queries |
+| **Packaging** | npm package, run via `npx mcp-money` |
+| **Open-source** | Solo maintainer with reference implementation quality |
+| **Launch** | MCP directories → Reddit → HN |
+| **Naming** | `mcp-money` |
 
 ---
 
-## 3. Runtime and Platform
-
-| Variant | Description | Compat | DX | Publishing | Maintenance | Contributor onboarding |
-|---------|------------|--------|-----|------------|-------------|----------------------|
-| **A. Bun-only** | Target Bun exclusively | 4/10 | 9/10 | 7/10 | 9/10 | 6/10 |
-| **B. Node-only** | Target Node.js with tsx/ts-node | 9/10 | 6/10 | 9/10 | 7/10 | 9/10 |
-| **C. Bun-primary, Node-compatible** | Write for Bun, test on Node, avoid Bun-specific APIs | 8/10 | 8/10 | 8/10 | 7/10 | 8/10 |
-| **D. Runtime-agnostic via std libs** | Only use node: APIs that both runtimes support | 9/10 | 5/10 | 8/10 | 6/10 | 8/10 |
-
-**Critical take**: Your CLAUDE.md says "default to Bun" but you also said "compatible with Bun and Node.js". These conflict if you use `Bun.serve()`, `Bun.file()`, `bun:sqlite`, etc. For an MCP server (stdio-based), you don't need `Bun.serve()`. The main risk is the DB driver — `bun:sqlite` is Bun-only, but since we're going PostgreSQL, this isn't an issue.
-
-**Key insight**: MCP servers run over stdio. There's no HTTP server needed. The runtime-specific surface is actually very small: it's just "can you run TypeScript and connect to Postgres?"
-
-### Recommendation
-
-- **MVP**: **C — Bun-primary, Node-compatible**. Develop with Bun, use `bun test`, but stick to `node:` compatible APIs and a universal Postgres driver. The MCP SDK itself is runtime-agnostic.
-- **Backup**: B — if adoption is priority over DX.
-- **Defer**: A — locking to Bun kills half the potential userbase today.
-
-**Practical rule**: No `Bun.*` APIs in production code. `bun test` and `bun run` for dev are fine.
-
----
-
-## 4. MCP Implementation Model
-
-| Variant | Description | Simplicity | Flexibility | Scale | Local use | Remote use |
-|---------|------------|-----------|-------------|-------|-----------|------------|
-| **A. stdio only** | Classic MCP server via stdin/stdout using `@modelcontextprotocol/sdk` | 9/10 | 6/10 | 5/10 | 9/10 | 3/10 |
-| **B. stdio + SSE** | stdio for local, Server-Sent Events for remote | 7/10 | 8/10 | 7/10 | 9/10 | 8/10 |
-| **C. Streamable HTTP only** | MCP over HTTP (new spec) | 6/10 | 7/10 | 8/10 | 6/10 | 9/10 |
-| **D. stdio with optional HTTP wrapper** | stdio by default, separate `--http` flag adds HTTP transport | 8/10 | 9/10 | 7/10 | 9/10 | 7/10 |
-
-**Critical take**: 95% of current MCP usage is stdio via Claude Desktop / Claude Code / Cursor. SSE and Streamable HTTP are emerging but the ecosystem isn't there yet. Building HTTP transport in MVP is wasted effort.
-
-### Recommendation
-
-- **MVP**: **A — stdio only**. Use `@modelcontextprotocol/sdk` with `StdioServerTransport`. This is what every MCP client expects today.
-- **Backup**: D — add HTTP transport as a separate entry point later.
-- **Defer**: B, C — wait until MCP clients actually support these transports widely.
-
----
-
-## 5. Database Strategy
-
-| Variant | Description | Complexity | Portability | Stability | User DX | Author DX |
-|---------|------------|-----------|-------------|-----------|---------|-----------|
-| **A. PostgreSQL only** | Single target, full Postgres features | 3/10 | 4/10 | 9/10 | 7/10 | 9/10 |
-| **B. PostgreSQL + SQLite** | Postgres for prod, SQLite for local/quick start | 6/10 | 7/10 | 7/10 | 9/10 | 5/10 |
-| **C. Any SQL via Kysely/Drizzle** | ORM/query builder abstracting multiple DBs | 7/10 | 9/10 | 6/10 | 8/10 | 4/10 |
-| **D. PostgreSQL via raw SQL** | Raw queries, no ORM, pg driver only | 4/10 | 4/10 | 9/10 | 7/10 | 7/10 |
-
-**Critical take**: You said "no local SQLite as primary" — good. But requiring PostgreSQL is a real adoption barrier. Every user needs a running Postgres instance. This is the #1 friction point for the entire project.
-
-**The elephant in the room**: Free hosted Postgres options (Neon, Supabase, etc.) exist, but requiring users to set up external infra for a personal expense tracker is friction. The counterargument: anyone using MCP servers is already technical enough to have Postgres.
-
-**Tradeoff**: PostgreSQL-only = simpler code but harder onboarding. Multi-DB = harder code but easier onboarding.
-
-### Recommendation
-
-- **MVP**: **A — PostgreSQL only, via Drizzle ORM for type safety**. Use Drizzle with `drizzle-orm/pg-core` + `postgres` (postgres.js driver — works on both Bun and Node). Don't use raw SQL; Drizzle gives you typed queries, migrations, and schema-as-code.
-- **Backup**: D — raw SQL with `postgres` driver if you want zero ORM deps.
-- **Defer**: B — SQLite support can be added later via Drizzle's multi-dialect support if demand exists.
-- **Mitigation for onboarding**: Provide docker-compose.yml with Postgres for quick start. Document Neon free tier as 1-click cloud option.
-
----
-
-## 6. Schema Design
-
-### Core entities analysis
-
-| Entity | MVP? | Complexity | Value |
-|--------|------|-----------|-------|
-| **transactions** | Yes | Low | Critical |
-| **accounts** | ~~Yes~~ **No** | Low | Medium — deferred, simplifies MVP |
-| **categories** | Yes | Low-Med | High |
-| **budgets** | Yes (basic) | Medium | High |
-| **tags** | Yes | Low | Medium — flexible labeling beyond categories |
-| **transaction_tags** | Yes | Low | Junction table for many-to-many |
-| **recurring_transactions** | No | High | Medium |
-| **currencies** | No | High | Medium |
-
-> **Decision**: Accounts removed from MVP. Tags added — lightweight many-to-many via junction table.
-
-### Schema variants
-
-| Variant | Description | Simplicity | Extensibility | Query perf |
-|---------|------------|-----------|---------------|------------|
-| **A. Flat** | transactions + categories (inline). No accounts table. | 9/10 | 3/10 | 8/10 |
-| **B. Normalized** | transactions, accounts, categories as separate tables with FKs | 7/10 | 8/10 | 8/10 |
-| **C. Normalized + JSONB** | B + JSONB `metadata` column on transactions for extensibility | 6/10 | 9/10 | 7/10 |
-| **D. Event-sourced** | Append-only events, materialized views for balances | 3/10 | 10/10 | 5/10 |
-
-### ✅ Final MVP schema (Variant B, no accounts, with tags)
+## Schema
 
 ```
 mcp_money.categories
@@ -170,86 +62,16 @@ mcp_money.budgets
   created_at  timestamptz
 ```
 
-### Decision
-
-- **MVP**: 5 tables: categories, tags, transactions, transaction_tags, budgets. No accounts table.
-- **Tags**: Many-to-many via junction table. Tags are flat (no hierarchy). Created on-the-fly when used in `add_transaction` or via `create_tag`.
-- **Currency column** kept on transactions for future multi-currency expansion (section 10).
-- **Defer**: accounts, recurring_transactions, multi-currency conversion.
-- **Critical**: Use `numeric(19,4)` for money, never float. UUID v7 for time-sortable IDs. `date` not `timestamp` for transaction dates.
-- **Convention**: Negative amounts = expense, positive = income. This is simpler than separate `type` + positive amount.
-
-**Why no sign convention debate?** Because the MCP tool layer will handle `add_expense(amount: 50)` → stores as `-50`. Users never see the sign. The LLM handles presentation.
+**Conventions**:
+- `numeric(19,4)` for money, never float
+- UUID v7 for time-sortable IDs
+- `date` not `timestamp` for transaction dates
+- Negative amounts = expense, positive = income. MCP tool layer handles `add_expense(amount: 50)` → stores as `-50`.
+- Currency column kept on transactions for future multi-currency expansion, no conversion in v1.
 
 ---
 
-## 7. Migrations
-
-| Variant | Description | Reliability | Simplicity | OSS UX | Auto-migrate risk |
-|---------|------------|-------------|-----------|--------|-------------------|
-| **A. Drizzle Kit migrations** | `drizzle-kit generate` + `drizzle-kit migrate` | 8/10 | 8/10 | 8/10 | Low |
-| **B. Auto-migrate on startup** | Server checks schema version, applies SQL files on boot | 7/10 | 9/10 | 9/10 | Medium |
-| **C. Manual SQL files** | Numbered .sql files, user runs them manually | 9/10 | 4/10 | 4/10 | None |
-| **D. Drizzle push (dev) + migrations (prod)** | `drizzle-kit push` for dev, generated migrations for releases | 7/10 | 7/10 | 7/10 | Low |
-
-**Critical take**: For a standalone MCP server, the user should NOT have to run migrations manually. That kills adoption. But auto-migration on production databases is scary. The sweet spot: auto-migrate with a version table and confirmation.
-
-### Recommendation
-
-- **MVP**: **B — Auto-migrate on startup** with safety rails. On first connection, create `mcp_money.schema_version` table. On subsequent starts, check version and apply pending migrations. Use Drizzle for schema definition but ship migration SQL files that run sequentially.
-- **Safety**: Log what will be applied, apply in a transaction, rollback on error. For destructive migrations (column drops), require `--force` flag.
-- **Backup**: A — Drizzle Kit if you want more control.
-- **Defer**: C — manual migrations only make sense for enterprise users.
-
----
-
-## 8. MCP Tools
-
-### Variant A: Minimal (6 tools)
-
-| Tool | Purpose | MVP? |
-|------|---------|------|
-| `add_transaction` | Log expense or income | Yes |
-| `list_transactions` | Query with filters (date range, category) | Yes |
-| `delete_transaction` | Remove a transaction | Yes |
-| `get_summary` | Spending summary by period/category | Yes |
-| `list_categories` | Show available categories | Yes |
-| `list_accounts` | Show accounts | Yes |
-
-### Variant B: Practical (11 tools)
-
-All of A, plus:
-
-| Tool | Purpose | MVP? |
-|------|---------|------|
-| `update_transaction` | Edit existing transaction | Yes |
-| `create_category` | Add custom category | Yes |
-| `create_account` | Add new account | Yes |
-| `set_budget` | Set monthly budget for category | Yes |
-| `get_budget_status` | Check budget vs actual spending | Yes |
-
-### Variant C: Feature-rich (17 tools)
-
-All of B, plus:
-
-| Tool | Purpose | MVP? |
-|------|---------|------|
-| `add_recurring` | Set up recurring transaction | No |
-| `list_recurring` | Show recurring transactions | No |
-| `get_trends` | Spending trends over time | No |
-| `search_transactions` | Full-text search in descriptions | No |
-| `export_csv` | Export data | No |
-| `import_csv` | Import data | No |
-
-### Variant D: Kitchen sink (25+ tools)
-
-All of C, plus transfer_between_accounts, set_goal, get_forecast, add_tag, merge_categories, undo_last, get_net_worth, etc.
-
-**Critical take**: Every tool you add is a tool the LLM has to understand and choose from. More tools = more token usage per call = slower responses = worse UX. Keep the tool list tight.
-
-### ✅ Decision: Variant B adapted — 16 tools (no accounts, with tags)
-
-Since accounts are removed and tags added, the final tool list:
+## MCP Tools (16)
 
 | Tool | Purpose |
 |------|---------|
@@ -271,89 +93,29 @@ Since accounts are removed and tags added, the final tool list:
 | `health_check` | Report DB status, version, stats |
 
 **Destructive tool behavior**:
-- `delete_transaction` — hard delete, no confirmation
-- `delete_category` — fails with error if any transactions still reference it (RESTRICT). User must reassign or delete transactions first.
-- `delete_tag` — removes tag and all transaction_tags associations (CASCADE). Transactions themselves are untouched.
-- `delete_budget` — hard delete, no confirmation
-
-**Key insight**: `get_summary` is the most important tool after `add_transaction`. Without summaries, the server is just a dumb INSERT machine. The LLM should be able to say "You spent $450 on food this month, 20% over budget."
-
-**Defer**: Recurring, trends, import/export, search. All are v1.1+.
+- `delete_transaction` — hard delete
+- `delete_category` — RESTRICT: fails if any transactions reference it
+- `delete_tag` — CASCADE: removes tag and all transaction_tags associations, transactions untouched
+- `delete_budget` — hard delete
 
 ---
 
-## 9. Business Logic
+## Business Logic
 
-### Categories
+**Categories**: ~10 seed defaults (Groceries, Restaurants, Transport, Entertainment, Utilities, Rent, Salary, Healthcare, Shopping, Other). Users add custom ones via `create_category`. One level of nesting max (parent_id), not enforced in v1.
 
-| Approach | Description | Simplicity | Flexibility |
-|----------|------------|-----------|-------------|
-| **A. User-defined only** | Empty on start, user creates all categories | 7/10 | 10/10 |
-| **B. Seed defaults + user-defined** | Ship 15-20 common categories, user can add more | 9/10 | 9/10 |
-| **C. Hierarchical categories** | Parent/child (Food > Restaurants, Groceries) | 5/10 | 8/10 |
+**Tags**: Flexible cross-cutting labels. Many-to-many via junction table. Created on-the-fly in `add_transaction` or via `create_tag`. No presets — purely user-defined.
 
-**✅ Decision**: **B for MVP but fewer presets** — seed ~10 defaults (Groceries, Restaurants, Transport, Entertainment, Utilities, Rent, Salary, Healthcare, Shopping, Other). Allow users to add custom ones via `create_category` tool. One level of nesting max (parent_id), but don't enforce hierarchy in v1 — just support it in schema.
+**Budgets**: Monthly per category only. Covers 90% of use cases.
 
-### Tags
+**Currency**: Changed via `set_currency` MCP tool. Default: `USD`. Stored in `mcp_money.settings` key-value row. Currency per transaction, no conversion — summaries group by currency.
 
-Tags provide flexible cross-cutting labels beyond rigid categories. A transaction can have multiple tags (e.g. "business-trip", "reimbursable"). Tags are created on-the-fly when first used in `add_transaction`, or explicitly via `create_tag`. No presets — purely user-defined.
-
-### Budgets
-
-| Approach | Description | Simplicity | Value |
-|----------|------------|-----------|-------|
-| **A. Monthly per category** | Simple: "Food budget is $500/month" | 9/10 | 8/10 |
-| **B. Flexible period** | Weekly/monthly/quarterly budgets | 6/10 | 7/10 |
-| **C. Rollover budgets** | Unused budget carries over | 4/10 | 6/10 |
-
-**Recommendation**: **A — monthly per category only**. This covers 90% of use cases. Weekly/quarterly is v2.
-
-### Recurring transactions
-
-**Recommendation**: **Not in MVP.** Recurring transactions need a scheduler or a "materialize on query" pattern. Both add complexity. Users can just tell the LLM "add my $50 gym membership" each month. Defer to v1.1.
-
-### Rules and templates
-
-**Recommendation**: **Not in MVP.** Premature. The LLM IS the rule engine — it can apply patterns conversationally. Don't duplicate what the LLM does naturally.
+**Migrations**: Auto-migrate on startup. Version table `mcp_money.schema_version`. Apply in transaction, rollback on error. Destructive migrations require `--force` flag.
 
 ---
 
-## 10. Multi-currency
+## Config
 
-| Variant | Description | Complexity | Value | Error risk |
-|---------|------------|-----------|-------|------------|
-| **A. Single currency, user-configured** | One currency globally, set in config | 1/10 | 6/10 | 1/10 |
-| **B. Currency per transaction** | Store currency on each tx, no conversion | 3/10 | 7/10 | 2/10 |
-| **C. Currency per account + conversion** | Each account has a currency, convert for summaries | 7/10 | 8/10 | 7/10 |
-| **D. Full multi-currency with rate history** | Store exchange rates, convert at historical rates | 9/10 | 9/10 | 9/10 |
-
-**Critical take**: Multi-currency is the #1 complexity trap in finance apps. Exchange rates, rounding errors, which rate to use (transaction date? today?), API dependencies for rates — it spirals fast.
-
-### Recommendation
-
-- **MVP**: **B — Currency per transaction, no conversion**. Store the currency code (ISO 4217) on each transaction. Default from account currency. Summaries group by currency — don't convert. This is honest and simple.
-- **Defer**: C, D. Conversion requires an exchange rate source, caching, and rounding policy. All are v2.
-- **Schema preparation**: The `currency` column is already in the schema (section 6). You're ready to extend without migration pain.
-
----
-
-## 11. Packaging and Installation
-
-| Variant | Description | First-run simplicity | Updates | DX | Adoption |
-|---------|------------|---------------------|---------|-----|----------|
-| **A. npm package** | `npx mcp-money` or `bunx mcp-money` | 9/10 | 9/10 | 8/10 | 9/10 |
-| **B. Docker image** | `docker run mcp-money` | 7/10 | 8/10 | 6/10 | 7/10 |
-| **C. Git clone + run** | Clone repo, `bun install && bun start` | 5/10 | 4/10 | 7/10 | 5/10 |
-| **D. npm + Docker** | npm for MCP stdio, Docker for self-hosted with DB included | 8/10 | 8/10 | 7/10 | 8/10 |
-
-**Critical take**: MCP servers are typically configured in `claude_desktop_config.json` as a command. The dominant pattern is `npx @org/mcp-server`. Docker doesn't work well with stdio-based MCP.
-
-### Recommendation
-
-- **MVP**: **A — npm package**. Publish as `mcp-money` on npm. Usage: `npx mcp-money` with `DATABASE_URL` env var. This is the standard MCP installation pattern.
-- **Also ship**: `docker-compose.yml` with Postgres for users who need a quick DB. But the MCP server itself runs via npx, not Docker.
-- **Defer**: Docker image of the server itself. Stdio over Docker is awkward.
-- **Config example for Claude Desktop**:
 ```json
 {
   "mcpServers": {
@@ -368,460 +130,72 @@ Tags provide flexible cross-cutting labels beyond rigid categories. A transactio
 }
 ```
 
----
-
-## 12. Config Model
-
-| Variant | Description | Simplicity | Extensibility | Error rate | Zero-friction |
-|---------|------------|-----------|---------------|------------|--------------|
-| **A. Env vars only** | `DATABASE_URL` and nothing else | 10/10 | 3/10 | 2/10 | 10/10 |
-| **B. Env vars + config file** | .env for connection, JSON/YAML for preferences | 6/10 | 8/10 | 5/10 | 6/10 |
-| **C. Env vars + CLI flags** | `--currency USD --schema mcp_money` | 7/10 | 6/10 | 3/10 | 8/10 |
-| **D. All in DATABASE_URL + query params** | `postgres://...?schema=mcp_money&currency=USD` | 8/10 | 4/10 | 4/10 | 9/10 |
-
-**Critical take**: For MVP, what configuration does the user actually need?
-1. `DATABASE_URL` — required
-2. Default currency — optional (default USD)
-3. Schema name — optional (default mcp_money)
-
-That's it. You don't need a config file for 3 settings.
-
-### ✅ Decision: A+C hybrid — env vars + CLI flags, currency via tool
-
-- `DATABASE_URL` is the only required config. Optional: `MCP_MONEY_SCHEMA=mcp_money` env var.
-- **Currency is changed via the `set_currency` MCP tool**, not an env var. This lets the LLM change it conversationally ("switch to EUR"). Default: `USD`. Stored in a `mcp_money.settings` key-value row or in-memory with persistence.
-- **Defer**: Config files. You don't need them until you have 10+ settings.
-- **Rule**: If you can't justify a config option with a real user scenario, don't add it.
+- `DATABASE_URL` — required
+- `MCP_MONEY_SCHEMA` — optional (default `mcp_money`)
+- `DEBUG=true` — enables SQL query logging to stderr
 
 ---
 
-## 13. Testing Strategy
-
-| Variant | Description | Min coverage | Quality impact | Regression safety | Effort |
-|---------|------------|-------------|----------------|-------------------|--------|
-| **A. Unit tests only** | Test business logic functions in isolation | Low | Medium | Low | Low |
-| **B. Integration tests with test DB** | Spin up Postgres, test full tool → DB flow | High | High | High | Medium |
-| **C. B + E2E MCP tests** | Test full MCP protocol round-trips | Very high | Very high | Very high | High |
-| **D. B + snapshot tests** | Integration tests + snapshot tool outputs | High | High | High | Medium |
-
-**Critical take**: For an MCP server, the most valuable tests are integration tests that verify: tool call → SQL → correct response. Unit testing individual SQL queries without a DB is low-value.
-
-### ✅ Decision: C — Integration + E2E MCP tests
-
-- **Integration tests** with a test Postgres via `bun test`. Each test suite creates a fresh schema, runs tools, asserts results.
-- **E2E MCP protocol tests**: test full MCP round-trips (tool call → JSON-RPC → response). Validates that tool schemas, transport, and responses work correctly end-to-end.
-- **Require**: docker-compose for test Postgres (or use existing local Postgres).
-- **Key tests**: add_transaction → list_transactions round-trip, get_summary correctness, budget status calculations, MCP protocol compliance.
-
----
-
-## 14. Observability and Debugging
-
-| Variant | Description | V1 critical? | Value later | Implementation cost |
-|---------|------------|-------------|------------|-------------------|
-| **A. stderr logging** | console.error for logs (MCP best practice — stdout is protocol) | Yes | Yes | 1/10 |
-| **B. Structured logging** | JSON logs with levels via pino/winston | Maybe | Yes | 3/10 |
-| **C. SQL query logging** | Log all queries in debug mode | Yes | Yes | 2/10 |
-| **D. Health check tool** | MCP tool `health_check` that reports DB status, version, stats | Yes | Yes | 2/10 |
-
-### Recommendation
-
-- **MVP**: **A + C + D**. stderr logging (required for MCP — stdout is the protocol channel), SQL query logging behind `DEBUG=true`, and a `health_check` tool. Simple, effective.
-- **Defer**: Structured logging with pino. Over-engineered for v1.
-- **Critical rule**: NEVER write to stdout except MCP protocol messages. All logs go to stderr.
-
----
-
-## 15. Safety and Security
-
-| Variant | Description | Realism | Cost | UX impact |
-|---------|------------|---------|------|-----------|
-| **A. Trust the LLM** | No confirmation, no limits | 10/10 | 0/10 | 10/10 |
-| **B. Schema isolation** | All tables in `mcp_money` schema, restricted DB user recommended | 9/10 | 2/10 | 9/10 |
-| **C. Rate limiting** | Max N transactions per minute | 5/10 | 4/10 | 7/10 |
-| **D. Confirmation for destructive ops** | Delete requires re-confirmation via MCP | 3/10 | 5/10 | 5/10 |
-
-**Critical take**: MCP servers don't have a built-in confirmation mechanism. The LLM decides when to call tools. Rate limiting on a personal finance tool is absurd. The real security boundary is: use a dedicated Postgres user with only `mcp_money` schema access.
-
-### Recommendation
-
-- **MVP**: **B — Schema isolation**. Use `mcp_money` schema. Document "create a dedicated Postgres user with access only to this schema." That's it.
-- **Also**: SQL injection is impossible if you use parameterized queries (Drizzle handles this).
-- **Defer**: C, D. Not realistic for MCP's interaction model.
-- **Document**: "This server will CREATE, READ, UPDATE, DELETE data in the `mcp_money` schema. Use a dedicated database or user."
-
----
-
-## 16. Open-source Strategy
-
-| Variant | Description | Stars potential | Contributors | Maintenance | Sustainability |
-|---------|------------|----------------|-------------|-------------|---------------|
-| **A. Solo maintainer** | You maintain, accept PRs occasionally | 5/10 | 3/10 | 9/10 | 6/10 |
-| **B. Community-driven** | Active issues, discussions, contributor guide | 7/10 | 7/10 | 5/10 | 7/10 |
-| **C. Company-backed** | Part of a larger MCP ecosystem | 8/10 | 5/10 | 4/10 | 5/10 |
-| **D. "Batteries included" showcase** | Reference implementation quality, heavy docs | 8/10 | 8/10 | 3/10 | 7/10 |
-
-### Recommendation
-
-- **MVP**: **A with elements of D**. Solo maintainer with excellent README, clean code, and good examples. Don't optimize for contributors before you have users.
-- **Post-MVP**: Move toward B. Open discussions, add CONTRIBUTING.md, label good-first-issues.
-- **Defer**: C — don't pretend this is a company-backed product.
-
----
-
-## 17. README and Launch Strategy
-
-| Variant | Description | First users | Stars | Validates value |
-|---------|------------|------------|-------|-----------------|
-| **A. Hacker News post** | "Show HN: I built an MCP server for personal finance" | 8/10 | 8/10 | 7/10 |
-| **B. Reddit r/ClaudeAI + r/selfhosted** | Community posts with demo | 7/10 | 5/10 | 8/10 |
-| **C. Twitter/X thread** | Demo video + thread in AI/dev circles | 6/10 | 7/10 | 5/10 |
-| **D. MCP ecosystem listing** | Submit to MCP server directories, awesome-mcp-servers | 7/10 | 6/10 | 6/10 |
-
-### Recommendation
-
-- **Launch**: **D first (low effort, high longevity), then B, then A**. Get listed in MCP directories immediately. Post on r/ClaudeAI with a real usage demo. HN only after you have 50+ stars and real usage — cold HN posts for MCP tools tend to die.
-- **README must have**: 1) One-liner pitch, 2) 30-second install, 3) GIF/screenshot of Claude using it, 4) Feature list, 5) Roadmap.
-- **Defer**: Twitter threads (low ROI unless you have followers).
-
----
-
-## 18. Roadmap
-
-### A. Very pragmatic
-
-| Phase | Timeline | Deliverables |
-|-------|---------|-------------|
-| Week 1 | Day 1-7 | Working MCP server: add/list/delete/update transactions, categories, accounts. npm publishable. |
-| Month 1 | Week 2-4 | Summaries, budgets, seed categories, docker-compose, polished README |
-| Quarter 1 | Month 2-3 | Recurring transactions, tags, trends, CSV export |
-
-### B. Balanced
-
-| Phase | Timeline | Deliverables |
-|-------|---------|-------------|
-| Week 1 | Day 1-7 | DB layer + migrations + 6 core tools working locally |
-| Month 1 | Week 2-4 | All 11 MVP tools, budgets, tests, npm publish, README, launch on MCP directories |
-| Quarter 1 | Month 2-3 | Multi-currency summaries, recurring, import/export, community feedback loop |
-
-### C. Growth-oriented
-
-| Phase | Timeline | Deliverables |
-|-------|---------|-------------|
-| Week 1 | Day 1-7 | Core tools + beautiful README + demo GIF |
-| Month 1 | Week 2-4 | MVP + launch on HN + Reddit + MCP dirs + respond to all issues |
-| Quarter 1 | Month 2-3 | Features driven by user requests, blog posts, comparison pages |
-
-### D. Ambitious
-
-| Phase | Timeline | Deliverables |
-|-------|---------|-------------|
-| Week 1 | Day 1-7 | Full MVP with tests |
-| Month 1 | Week 2-4 | Multi-currency, recurring, bank CSV import, plugin system |
-| Quarter 1 | Month 2-3 | Multi-DB support, web dashboard, API, mobile app integration |
-
-**Critical take**: D is fantasy. C is risky — optimizing for stars before the product works is backwards. A might ship something unusable (no budgets = toy).
-
-### Recommendation
-
-- **Follow**: **B — Balanced**. Ship quality, then launch. Don't rush to HN with a half-working tool.
-
----
-
-## 19. Competitive Differentiation
-
-### Landscape
-
-| Competitor type | Examples | Weakness we exploit |
-|----------------|---------|---------------------|
-| Local MCP trackers | JSON/SQLite file-based, markdown ledgers | No real DB, no multi-device, data loss risk |
-| MCP wrappers over SaaS | Mint MCP, YNAB MCP, Plaid MCP | Vendor lock-in, API keys, privacy concerns, subscription cost |
-| Generic DB MCP | postgres-mcp, sqlite-mcp | No domain logic, user writes raw SQL, no summaries/budgets |
-
-### Differentiators
-
-| # | Differentiator | Pitch line |
-|---|---------------|------------|
-| 1 | **SQL-first, self-hosted** | "Your money data in YOUR PostgreSQL. No SaaS, no subscriptions, no API keys." |
-| 2 | **Zero-config domain logic** | "Not a generic SQL proxy. Purpose-built for expense tracking with categories, budgets, and summaries." |
-| 3 | **Works with any MCP client** | "Claude Desktop, Claude Code, Cursor, Windsurf — if it speaks MCP, it tracks your money." |
-| 4 | **One env var to start** | "Set DATABASE_URL. That's the entire setup." |
-
-### README pitch (recommended)
-
-> **mcp-money** — Track expenses and income through your AI assistant.
->
-> No spreadsheets. No finance apps. Just tell Claude "I spent $12 on lunch" and it's tracked in your PostgreSQL database with categories, budgets, and summaries.
->
-> Self-hosted. Private. SQL-first. One env var to start.
-
----
-
-## 20. Naming and Branding
-
-| Variant | Name | Tagline | One-liner |
-|---------|------|---------|-----------|
-| **A** | `mcp-money` | "Your AI-powered expense tracker" | "Track spending through your AI assistant, stored in PostgreSQL" |
-| **B** | `cashflow-mcp` | "Personal finance MCP server" | "Tell Claude what you spent. It remembers." |
-| **C** | `ledger-mcp` | "AI-native personal ledger" | "Self-hosted expense tracking via MCP protocol" |
-| **D** | `mcp-wallet` | "Your AI wallet" | "Let your AI assistant manage your expense tracking" |
-
-### Analysis
-
-- **mcp-money**: Clear, memorable, follows `mcp-*` naming convention. Slightly generic.
-- **cashflow-mcp**: Implies more than expense tracking (cash flow analysis). Overpromises for MVP.
-- **ledger-mcp**: Sounds like hledger/accounting. Scares casual users. Attracts wrong audience.
-- **mcp-wallet**: "Wallet" implies payment/crypto. Confusing.
-
-### Recommendation
-
-- **Best**: **A — `mcp-money`**. Already your repo name. Clear, searchable, follows convention. Not sexy but not confusing.
-- **Backup**: B, but only if you commit to cash flow analysis features.
-- **Avoid**: C (too accounting-heavy), D (crypto confusion).
-
-### Recommended README opening
-
-```markdown
-# mcp-money
-
-Track your expenses and income through any AI assistant that supports MCP.
-
-No spreadsheets. No finance apps. Just tell your AI "I spent $45 on groceries"
-and it's stored in your PostgreSQL database — with categories, budgets, and spending summaries.
-
-## Why mcp-money?
-
-- **Self-hosted** — Your financial data stays in your database
-- **SQL-first** — PostgreSQL, not JSON files or SQLite
-- **Zero config** — One env var: `DATABASE_URL`
-- **Smart defaults** — Pre-built categories, monthly budgets, spending summaries
-- **Works everywhere** — Claude Desktop, Claude Code, Cursor, any MCP client
-```
-
----
-
----
-
-# Final Decisions
-
-| Aspect | Decision |
-|--------|----------|
-| **Positioning** | B — Expense tracker for AI assistants |
-| **MVP scope** | B adapted — Transactions + categories + tags + summaries + basic budgets (16 tools). **No accounts.** |
-| **Runtime** | C — Bun-primary, Node-compatible (no Bun-specific APIs in production code) |
-| **MCP transport** | A — stdio only via `@modelcontextprotocol/sdk` |
-| **Database** | A — PostgreSQL only, via Drizzle ORM + postgres.js driver |
-| **Schema** | B — 5 tables: categories, tags, transactions, transaction_tags, budgets. All in `mcp_money` schema. Currency column kept for future expansion. |
-| **Migrations** | B — Auto-migrate on startup with version tracking |
-| **Config** | A+C — `DATABASE_URL` required. `MCP_MONEY_SCHEMA` optional env var. **Currency changed via `set_currency` tool**, not env var. |
-| **Testing** | C — Integration tests + E2E MCP protocol tests via `bun test` |
-| **Observability** | A+C+D — stderr logging + SQL query logging (DEBUG) + health_check tool |
-| **Security** | B — Schema isolation + parameterized queries |
-| **Packaging** | A — npm package, run via `npx mcp-money` |
-| **Open-source** | A+D — Solo maintainer with reference implementation quality |
-| **Launch** | D→B→A — MCP directories → Reddit → HN (in that order) |
-| **Naming** | A — `mcp-money` |
-
----
-
-# Implementation Plan
-
-## Phase 0: Repo Bootstrap (Day 1)
-
-**Goals**: Clean project setup, CI, dependencies.
-
-**Tasks**:
-- Initialize proper package.json with name, version, description, bin, exports
-- Add dependencies: `@modelcontextprotocol/sdk`, `drizzle-orm`, `postgres`
-- Add dev dependencies: `drizzle-kit`, `@types/bun`, `typescript`
-- Set up tsconfig.json for both Bun and Node compatibility
-- Add `.github/workflows/ci.yml` (lint + test)
-- Add docker-compose.yml with Postgres for development
-- Add proper .gitignore
-- Add LICENSE (MIT)
-
-**Deliverables**: Repo that builds and has CI green.
-
-**Risks**: None.
-
-**Done when**: `bun build` succeeds, CI passes.
-
-## Phase 1: Database Layer (Day 2-3)
-
-**Goals**: Schema, migrations, DB connection.
-
-**Tasks**:
-- Define Drizzle schema in `src/db/schema.ts` (5 tables: categories, tags, transactions, transaction_tags, budgets)
-- Implement auto-migration system with version tracking
-- Implement DB connection with `DATABASE_URL`
+## Implementation Plan
+
+### Phase 0: Repo Bootstrap (Day 1)
+
+- Initialize package.json with name, version, description, bin, exports
+- Dependencies: `@modelcontextprotocol/sdk`, `drizzle-orm`, `postgres`
+- Dev deps: `drizzle-kit`, `@types/bun`, `typescript`
+- tsconfig.json for Bun + Node compatibility
+- `.github/workflows/ci.yml` (lint + test)
+- docker-compose.yml with Postgres
+- .gitignore, LICENSE (MIT)
+
+### Phase 1: Database Layer (Day 2-3)
+
+- Drizzle schema in `src/db/schema.ts` (5 tables)
+- Auto-migration system with version tracking
+- DB connection via `DATABASE_URL`
 - Seed ~10 default categories
-- Write integration tests for schema creation and seeding
+- Integration tests for schema creation and seeding
 
-**Deliverables**: Running `bun run src/db/migrate.ts` creates all tables in a fresh Postgres.
+### Phase 2: MCP Server Skeleton (Day 3-4)
 
-**Risks**: Drizzle + postgres.js compatibility edge cases across runtimes.
+- MCP server with `@modelcontextprotocol/sdk` + `StdioServerTransport`
+- Register tool definitions with JSON schemas
+- health_check tool
+- DB connection lifecycle (connect on start, close on exit)
 
-**Done when**: Tests pass creating schema, inserting data, querying data.
+### Phase 3: Core Tools (Day 4-7)
 
-## Phase 2: MCP Server Skeleton (Day 3-4)
+All 16 tools:
+- `add_transaction`, `list_transactions`, `update_transaction`, `delete_transaction`
+- `get_summary`
+- `list_categories`, `create_category`, `delete_category`
+- `list_tags`, `create_tag`, `delete_tag`
+- `set_budget`, `get_budget_status`, `delete_budget`
+- `set_currency`, `health_check`
+- Integration tests + E2E MCP protocol tests
 
-**Goals**: Working MCP server that responds to tool calls.
+### Phase 4: Polish and Release (Day 8-10)
 
-**Tasks**:
-- Set up MCP server with `@modelcontextprotocol/sdk`
-- Register tool definitions with proper JSON schemas
-- Implement `StdioServerTransport`
-- Add health_check tool
-- Implement DB connection lifecycle (connect on start, close on exit)
-- Test with Claude Desktop or `mcp-inspector`
-
-**Deliverables**: MCP server starts, lists tools, responds to health_check.
-
-**Risks**: stdio buffering issues across runtimes.
-
-**Done when**: Can connect from Claude Desktop and see tool list.
-
-## Phase 3: Core Tools (Day 4-7)
-
-**Goals**: All 16 MVP tools working.
-
-**Tasks**:
-- `add_transaction` — with amount, description, date, category, tags
-- `list_transactions` — with filters: date range, category, tag, limit
-- `update_transaction` — update any field including tags
-- `delete_transaction` — by ID
-- `get_summary` — spending by category for a period, totals, averages
-- `list_categories` — all categories
-- `create_category` — custom category
-- `delete_category` — fails if transactions reference it (RESTRICT)
-- `list_tags` — all tags
-- `create_tag` — add a new tag
-- `delete_tag` — removes tag and associations (CASCADE)
-- `set_budget` — monthly budget for a category
-- `get_budget_status` — actual vs budget for current month
-- `delete_budget` — remove a budget
-- `set_currency` — change default currency for new transactions
-- `health_check` — DB status, version, stats
-- Integration tests + E2E MCP protocol tests for each tool
-
-**Deliverables**: All tools work end-to-end with real Postgres.
-
-**Risks**: Tool input schemas need to be LLM-friendly (good descriptions, sensible defaults). This is iterative.
-
-**Done when**: Can have a natural conversation with Claude: "I spent $50 on groceries" → "How much did I spend this month?" → "Set a $400 food budget" → "Am I over budget?"
-
-## Phase 4: Polish and Release (Day 8-10)
-
-**Goals**: Ship v0.1.0 to npm.
-
-**Tasks**:
-- npm package configuration (bin entry point, proper exports)
-- Build step for Node.js compatibility (if needed — test with `npx` from npm)
-- Write README with: pitch, install, config, usage examples, demo GIF
-- Add CHANGELOG.md
-- Add CONTRIBUTING.md (minimal)
+- npm package config (bin entry, exports)
+- Build step for Node.js compatibility
+- README: pitch, install, config, usage examples, demo GIF
+- CHANGELOG.md, CONTRIBUTING.md
 - Test on Claude Desktop, Claude Code, Cursor
-- Publish to npm
-- Submit to awesome-mcp-servers, MCP directories
+- Publish to npm, submit to awesome-mcp-servers
 
-**Deliverables**: `npx mcp-money` works out of the box.
+### Phase 5: Post-MVP (Month 2+)
 
-**Risks**: npm publishing, bin entry shebang issues between Bun/Node.
-
-**Done when**: Fresh user can `npx mcp-money` with a DATABASE_URL and start tracking expenses.
-
-## Phase 5: Post-MVP (Month 2+)
-
-**Goals**: Respond to real user feedback.
-
-**Tasks** (tentative, driven by feedback):
-- Accounts support (optional FK on transactions, list/create tools)
+Driven by user feedback:
+- Accounts support (optional FK on transactions)
 - Recurring transactions
 - CSV import/export
-- Spending trends over time
-- Multi-currency with optional conversion
+- Spending trends
+- Multi-currency with conversion
 - SQLite support via Drizzle
 
 ---
 
-# Repository Structure
-
-### Variant A: Flat
-
-```
-src/
-  index.ts
-  db.ts
-  schema.ts
-  tools.ts
-  migrations/
-```
-Too flat. Hard to navigate as it grows.
-
-### Variant B: By layer
-
-```
-src/
-  server/
-    index.ts
-    transport.ts
-  db/
-    connection.ts
-    schema.ts
-    migrations/
-  tools/
-    transactions.ts
-    categories.ts
-    accounts.ts
-    budgets.ts
-    summary.ts
-    health.ts
-  config.ts
-```
-Clean separation. Easy to find things. Scales well.
-
-### Variant C: By feature
-
-```
-src/
-  transactions/
-    tools.ts
-    queries.ts
-    schema.ts
-  categories/
-    tools.ts
-    queries.ts
-    schema.ts
-  budgets/
-    tools.ts
-    queries.ts
-    schema.ts
-```
-Over-engineered for 4 tables. Creates file explosion.
-
-### Variant D: Minimal + barrel
-
-```
-src/
-  index.ts        # entry point, MCP server setup
-  db/
-    index.ts      # connection
-    schema.ts     # all tables
-    migrate.ts    # migration runner
-    seed.ts       # default categories
-    migrations/   # SQL files
-  tools/
-    index.ts      # register all tools
-    transactions.ts
-    accounts.ts
-    categories.ts
-    budgets.ts
-    summary.ts
-    health.ts
-  config.ts       # env var parsing
-```
-
-### Recommendation: **Variant D**
+## Repository Structure
 
 ```
 mcp-money/
@@ -839,9 +213,9 @@ mcp-money/
 │   └── tools/
 │       ├── index.ts          # tool registry
 │       ├── transactions.ts   # add, list, update, delete
-│       ├── categories.ts     # list, create
-│       ├── tags.ts           # list, create
-│       ├── budgets.ts        # set, get_status
+│       ├── categories.ts     # list, create, delete
+│       ├── tags.ts           # list, create, delete
+│       ├── budgets.ts        # set, get_status, delete
 │       ├── summary.ts        # get_summary
 │       ├── settings.ts       # set_currency
 │       └── health.ts         # health_check
@@ -851,11 +225,11 @@ mcp-money/
 │   ├── budgets.test.ts
 │   ├── summary.test.ts
 │   └── e2e/
-│       └── mcp-protocol.test.ts  # E2E MCP round-trip tests
+│       └── mcp-protocol.test.ts
 ├── package.json
 ├── tsconfig.json
 ├── drizzle.config.ts
-├── docker-compose.yml        # Postgres for dev/test
+├── docker-compose.yml
 ├── LICENSE
 ├── README.md
 ├── CHANGELOG.md
@@ -864,22 +238,22 @@ mcp-money/
 
 ---
 
-# Task Breakdown
+## Task Breakdown
 
-## First 10 tasks
+### First 10 tasks
 
 1. Set up package.json with proper fields (name, version, bin, exports, dependencies)
 2. Configure tsconfig.json for ESM + both runtimes
 3. Create docker-compose.yml with PostgreSQL 16
 4. Implement `src/config.ts` — parse DATABASE_URL and optional env vars
-5. Define Drizzle schema in `src/db/schema.ts` — 5 tables (categories, tags, transactions, transaction_tags, budgets)
+5. Define Drizzle schema in `src/db/schema.ts` — 5 tables
 6. Implement `src/db/connection.ts` — postgres.js connection pool
 7. Implement `src/db/migrate.ts` — auto-migration with version tracking
 8. Write `src/db/migrations/001_initial.sql` — create schema and tables
 9. Implement `src/db/seed.ts` — ~10 default categories
 10. Write first integration test: schema creation + seeding
 
-## Next 10 tasks
+### Next 11 tasks
 
 11. Implement MCP server skeleton in `src/index.ts`
 12. Implement `health_check` tool
@@ -893,26 +267,26 @@ mcp-money/
 20. Implement `set_currency` tool
 21. Write integration tests + E2E MCP protocol tests for all tools
 
-## Optional later tasks
+### Post-MVP tasks
 
-21. Write README with usage examples and demo GIF
-22. Set up GitHub Actions CI (lint + test with Postgres service)
-23. Configure npm publishing (bin entry, shebang, build step)
-24. Test on Claude Desktop, Claude Code, Cursor
-25. Publish v0.1.0 to npm
-26. Submit to awesome-mcp-servers
-27. Add accounts support (optional FK on transactions)
-28. Add recurring transactions
-29. Add CSV export tool
+22. Write README with usage examples and demo GIF
+23. Set up GitHub Actions CI (lint + test with Postgres service)
+24. Configure npm publishing (bin entry, shebang, build step)
+25. Test on Claude Desktop, Claude Code, Cursor
+26. Publish v0.1.0 to npm
+27. Submit to awesome-mcp-servers
+28. Add accounts support (optional FK on transactions)
+29. Add recurring transactions
+30. Add CSV export tool
 31. Add spending trends tool
 32. Add multi-currency conversion with external rates API
 33. Add SQLite support via Drizzle dialect
 
 ---
 
-# Decision Log
+## Decision Log
 
-## Chose
+### Chose
 
 | Decision | Rationale |
 |----------|-----------|
@@ -921,26 +295,26 @@ mcp-money/
 | postgres.js driver | Works on both Bun and Node, no native bindings |
 | stdio-only MCP | 95% of MCP usage is stdio, HTTP is premature |
 | Auto-migration on startup | Zero friction for users, critical for adoption |
-| **No accounts in MVP** | Simplifies schema and tools. Can add later as optional FK. |
-| **Tags in MVP** | Lightweight many-to-many. Flexible labeling beyond rigid categories. |
-| **16 tools total** | CRUD for all entities + summary + budget status + set_currency + health_check |
+| No accounts in MVP | Simplifies schema and tools. Can add later as optional FK. |
+| Tags in MVP | Lightweight many-to-many. Flexible labeling beyond rigid categories. |
+| 16 tools total | CRUD for all entities + summary + budget status + set_currency + health_check |
 | Negative amounts for expenses | Simpler math, LLM handles presentation |
 | UUID v7 for IDs | Time-sortable, no sequence conflicts |
 | `mcp_money` schema | Isolation without requiring dedicated database |
 | npm package distribution | Standard MCP installation pattern |
 | Monthly-only budgets | 90% use case, simple implementation |
-| **~10 seeded default categories** | Better UX than empty start, but not overwhelming |
+| ~10 seeded default categories | Better UX than empty start, but not overwhelming |
 | `numeric(19,4)` for money | Never float. Industry standard precision. |
-| **Currency via MCP tool** | More natural than env var — LLM says "switch to EUR" |
-| **Integration + E2E MCP tests** | Full coverage: tool logic + protocol compliance |
-| **Currency column on transactions** | Kept for future multi-currency expansion, even without conversion in v1 |
+| Currency via MCP tool | More natural than env var — LLM says "switch to EUR" |
+| Integration + E2E MCP tests | Full coverage: tool logic + protocol compliance |
+| Currency column on transactions | Kept for future multi-currency expansion |
 
-## Consciously rejected
+### Consciously rejected
 
 | Decision | Reason |
 |----------|--------|
 | SQLite as primary store | User requirement: no local files |
-| **Accounts table in MVP** | Adds complexity without proportional value for v1. Deferred. |
+| Accounts table in MVP | Adds complexity without proportional value for v1 |
 | Multi-DB support in v1 | Complexity explosion for unproven demand |
 | Double-entry bookkeeping | Scares users, solves wrong problem for personal tracking |
 | Config file | 2 settings don't justify a config file |
@@ -950,13 +324,13 @@ mcp-money/
 | Structured logging (pino) | Over-engineered for v1 |
 | Event sourcing | 10x complexity for near-zero benefit in personal finance |
 | Plugin system | Premature abstraction |
-| **Currency as env var** | Tool-based approach is more natural for LLM interaction |
+| Currency as env var | Tool-based approach is more natural for LLM interaction |
 
-## Deferred to post-MVP
+### Deferred to post-MVP
 
 | Feature | When | Trigger |
 |---------|------|---------|
-| **Accounts** | v1.1 | User demand for separating cash/bank/card |
+| Accounts | v1.1 | User demand for separating cash/bank/card |
 | Recurring transactions | v1.1 | User demand |
 | Multi-currency conversion | v1.2 | User demand + good rate API found |
 | CSV import/export | v1.1 | Obvious early request |
@@ -965,7 +339,7 @@ mcp-money/
 | HTTP/SSE transport | v2.0 | When MCP clients support it widely |
 | Web dashboard | Never (probably) | Out of scope for MCP server |
 
-## Decisions to re-evaluate after MVP
+### Re-evaluate after MVP
 
 | Decision | Re-evaluate when |
 |----------|-----------------|

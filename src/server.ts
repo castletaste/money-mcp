@@ -5,6 +5,7 @@ import { seed } from "./db/seed.js";
 import { registerCategoryTools } from "./tools/categories.js";
 import { registerTagTools } from "./tools/tags.js";
 import { registerTransactionTools } from "./tools/transactions.js";
+import { registerSummaryTools } from "./tools/summary.js";
 import { log, debug } from "./lib/logger.js";
 import type postgres from "postgres";
 
@@ -50,6 +51,7 @@ export async function startServer(): Promise<ServerContext> {
   registerCategoryTools(server, db);
   registerTagTools(server, db);
   registerTransactionTools(server, db);
+  registerSummaryTools(server, db);
 
   log(`mcp-money server v${pkg.version} ready`);
 

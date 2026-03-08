@@ -29,12 +29,12 @@
 - Изменить: `tsconfig.json`
 - Создать: `src/index.ts` (новая точка входа)
 
-- [ ] Установить runtime-зависимости: `@modelcontextprotocol/sdk`, `drizzle-orm`, `postgres`, `zod`
-- [ ] Установить dev-зависимости: `drizzle-kit`
-- [ ] Добавить поле `bin` в package.json с указанием точки входа
-- [ ] Добавить скрипты: `start`, `dev`, `test`, `db:generate`
-- [ ] Создать структуру каталогов `src/`: `src/db/`, `src/tools/`, `src/lib/`
-- [ ] Проверить что проект собирается и запускается через `bun src/index.ts`
+- [x] Установить runtime-зависимости: `@modelcontextprotocol/sdk`, `drizzle-orm`, `postgres`, `zod`
+- [x] Установить dev-зависимости: `drizzle-kit`
+- [x] Добавить поле `bin` в package.json с указанием точки входа
+- [x] Добавить скрипты: `start`, `dev`, `test`, `db:generate`
+- [x] Создать структуру каталогов `src/`: `src/db/`, `src/tools/`, `src/lib/`
+- [x] Проверить что проект собирается и запускается через `bun src/index.ts`
 
 ### Задача 2: Схема базы данных и система миграций
 

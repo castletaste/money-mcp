@@ -1,12 +1,29 @@
 {
-  "name": "money-mcp",
-  "module": "index.ts",
+  "name": "mcp-money",
+  "version": "0.1.0",
+  "description": "MCP server for personal finance tracking",
+  "module": "src/index.ts",
   "type": "module",
-  "private": true,
+  "bin": {
+    "mcp-money": "./src/index.ts"
+  },
+  "scripts": {
+    "start": "bun src/index.ts",
+    "dev": "bun --watch src/index.ts",
+    "test": "bun test",
+    "db:generate": "bunx drizzle-kit generate"
+  },
   "devDependencies": {
-    "@types/bun": "latest"
+    "@types/bun": "latest",
+    "drizzle-kit": "^0.31.9"
   },
   "peerDependencies": {
     "typescript": "^5"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.27.1",
+    "drizzle-orm": "^0.45.1",
+    "postgres": "^3.4.8",
+    "zod": "^4.3.6"
   }
 }

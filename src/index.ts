@@ -25,6 +25,12 @@ try {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
+  // Keep process alive until stdin closes (MCP client disconnects)
+  await new Promise<void>((resolve) => {
+    process.stdin.on("close", resolve);
+    process.stdin.on("end", resolve);
+  });
+
   log("Server disconnected, cleaning up");
   await shutdown();
 } catch (error) {

@@ -356,7 +356,15 @@ export function registerTransactionTools(server: McpServer, db: Database) {
         .number()
         .positive()
         .optional()
-        .describe("New amount (positive; sign determined by category type)"),
+        .describe(
+          "New amount (positive; sign determined by category type or explicit type param)",
+        ),
+      type: z
+        .enum(["expense", "income"])
+        .optional()
+        .describe(
+          "Transaction type. Overrides category type for sign convention. Useful when updating transactions without a category.",
+        ),
       currency: z.string().optional().describe("New currency code"),
       category_id: z
         .string()
@@ -406,7 +414,11 @@ export function registerTransactionTools(server: McpServer, db: Database) {
           ? params.category_id
           : existing[0].categoryId;
 
-      if (params.amount !== undefined || params.category_id !== undefined) {
+      if (
+        params.amount !== undefined ||
+        params.category_id !== undefined ||
+        params.type !== undefined
+      ) {
         let categoryType: string | null = null;
         if (effectiveCategoryId) {
           const cat = await db
@@ -427,17 +439,23 @@ export function registerTransactionTools(server: McpServer, db: Database) {
           categoryType = cat[0].type;
         }
 
+        // Explicit type param overrides category type, matching add_transaction behavior
+        const effectiveType = params.type ?? categoryType;
+
         if (params.amount !== undefined) {
           const signedAmount =
-            categoryType === "income" ? params.amount : -params.amount;
+            effectiveType === "income" ? params.amount : -params.amount;
           updates.amount = signedAmount.toFixed(4);
-        } else if (params.category_id !== undefined) {
-          // Category changed but amount not provided - re-sign using string ops to avoid float precision loss
+        } else if (
+          params.category_id !== undefined ||
+          params.type !== undefined
+        ) {
+          // Category or type changed but amount not provided - re-sign using string ops to avoid float precision loss
           const rawAmount = existing[0].amount;
           const absStr = rawAmount.startsWith("-")
             ? rawAmount.slice(1)
             : rawAmount;
-          updates.amount = categoryType === "income" ? absStr : `-${absStr}`;
+          updates.amount = effectiveType === "income" ? absStr : `-${absStr}`;
         }
       }
 

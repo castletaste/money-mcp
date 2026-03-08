@@ -26,9 +26,9 @@ export function registerBudgetTools(server: McpServer, db: Database) {
     },
     async (params) => {
       try {
-        // Verify category exists
+        // Verify category exists and is an expense type (budgets track spending)
         const [cat] = await db
-          .select({ id: categories.id })
+          .select({ id: categories.id, type: categories.type })
           .from(categories)
           .where(eq(categories.id, params.category_id))
           .limit(1);
@@ -40,6 +40,18 @@ export function registerBudgetTools(server: McpServer, db: Database) {
               {
                 type: "text" as const,
                 text: `Category ${params.category_id} not found`,
+              },
+            ],
+          };
+        }
+
+        if (cat.type !== "expense") {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text" as const,
+                text: `Budgets can only be set on expense categories, not income categories`,
               },
             ],
           };
@@ -252,16 +264,7 @@ export function registerBudgetTools(server: McpServer, db: Database) {
             }),
           );
 
-          // If no spending at all, show zero
-          if (currencies.length === 0) {
-            currencies.push({
-              currency: "N/A",
-              spent: "0.0000",
-              remaining: budgetAmount.toFixed(4),
-              percentUsed: "0.0",
-              overBudget: false,
-            });
-          }
+          // currencies remains empty when there is no spending in the period
 
           return {
             budgetId: budget.id,

@@ -266,8 +266,8 @@ describe("get_budget_status", () => {
       (b: any) => b.categoryId === expenseCategoryId,
     );
     expect(aprilBudget).toBeDefined();
-    expect(aprilBudget.currencies[0].spent).toBe("0.0000");
-    expect(aprilBudget.currencies[0].currency).toBe("N/A");
+    // No spending in April — currencies array should be empty
+    expect(aprilBudget.currencies).toEqual([]);
   });
 });
 

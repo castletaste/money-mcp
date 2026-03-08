@@ -23,6 +23,17 @@ export function registerUtilTools(server: McpServer, db: Database) {
     async ({ currency }) => {
       try {
         const code = currency.toUpperCase();
+        if (!/^[A-Z]{1,10}$/.test(code)) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text" as const,
+                text: "Invalid currency code: must be 1-10 letters (e.g. USD, EUR, RUB)",
+              },
+            ],
+          };
+        }
 
         await db
           .insert(settings)

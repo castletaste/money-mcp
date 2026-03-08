@@ -127,10 +127,10 @@ export function registerSummaryTools(server: McpServer, db: Database) {
           const amount = Number(row.totalAmount);
           currencyTotals[currency].count += row.txCount;
           currencyTotals[currency].net += amount;
-          if (
-            row.categoryType === "income" ||
-            (row.categoryType === null && amount > 0)
-          ) {
+          // Classify by sign of stored amount (positive = income, negative = expense)
+          // per CLAUDE.md convention, not by category type, to stay consistent with
+          // how amounts are stored when a type override is used on add/update_transaction.
+          if (amount > 0) {
             currencyTotals[currency].income += amount;
           } else {
             currencyTotals[currency].expenses += amount;

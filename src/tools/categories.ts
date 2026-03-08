@@ -84,7 +84,11 @@ export function registerCategoryTools(server: McpServer, db: Database) {
         // Validate parent if provided
         if (parent_id) {
           const parent = await db
-            .select({ id: categories.id, parentId: categories.parentId })
+            .select({
+              id: categories.id,
+              type: categories.type,
+              parentId: categories.parentId,
+            })
             .from(categories)
             .where(eq(categories.id, parent_id));
 
@@ -100,14 +104,29 @@ export function registerCategoryTools(server: McpServer, db: Database) {
             };
           }
 
+          const parentRow = parent[0]!;
+
           // Enforce one nesting level: parent must not have a parent itself
-          if (parent[0].parentId) {
+          if (parentRow.parentId) {
             return {
               isError: true,
               content: [
                 {
                   type: "text" as const,
                   text: "Cannot nest more than one level deep. The specified parent already has a parent.",
+                },
+              ],
+            };
+          }
+
+          // Enforce type consistency: child must match parent type
+          if (parentRow.type !== type) {
+            return {
+              isError: true,
+              content: [
+                {
+                  type: "text" as const,
+                  text: `Type mismatch: parent category is "${parentRow.type}" but child type is "${type}". Subcategories must have the same type as their parent.`,
                 },
               ],
             };

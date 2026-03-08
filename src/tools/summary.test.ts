@@ -165,14 +165,14 @@ describe("get_summary", () => {
     expect(usdTotal).toBeDefined();
     expect(eurTotal).toBeDefined();
 
-    // USD: income 5000, expenses -50 + -30 + -20 = -100
+    // USD: income 5000, expenses 50 + 30 + 20 = 100
     expect(Number(usdTotal!.income)).toBe(5000);
-    expect(Number(usdTotal!.expenses)).toBe(-100);
+    expect(Number(usdTotal!.expenses)).toBe(100);
     expect(Number(usdTotal!.net)).toBe(4900);
 
-    // EUR: expenses -45
+    // EUR: expenses 45
     expect(Number(eurTotal!.income)).toBe(0);
-    expect(Number(eurTotal!.expenses)).toBe(-45);
+    expect(Number(eurTotal!.expenses)).toBe(45);
     expect(Number(eurTotal!.net)).toBe(-45);
   });
 

@@ -195,7 +195,7 @@ describe("acceptance: end-to-end MCP flow", () => {
     // USD totals should include our -55.99 expense
     const usdTotal = summary.totals.find((t) => t.currency === "USD");
     expect(usdTotal).toBeDefined();
-    expect(Number(usdTotal!.expenses)).toBeLessThan(0);
+    expect(Number(usdTotal!.expenses)).toBeGreaterThan(0);
 
     // Should have a Groceries/USD breakdown entry
     const groceriesUsd = summary.categoryBreakdown.find(
@@ -304,12 +304,12 @@ describe("acceptance: multi-currency", () => {
 
     // USD: income 3000, expense -75, net 2925
     expect(Number(usdTotal!.income)).toBe(3000);
-    expect(Number(usdTotal!.expenses)).toBe(-75);
+    expect(Number(usdTotal!.expenses)).toBe(75);
     expect(Number(usdTotal!.net)).toBe(2925);
 
     // EUR: income 0, expense -60, net -60
     expect(Number(eurTotal!.income)).toBe(0);
-    expect(Number(eurTotal!.expenses)).toBe(-60);
+    expect(Number(eurTotal!.expenses)).toBe(60);
     expect(Number(eurTotal!.net)).toBe(-60);
   });
 

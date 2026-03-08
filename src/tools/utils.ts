@@ -21,24 +21,36 @@ export function registerUtilTools(server: McpServer, db: Database) {
         .describe("Currency code (e.g. USD, EUR, RUB)"),
     },
     async ({ currency }) => {
-      const code = currency.toUpperCase();
+      try {
+        const code = currency.toUpperCase();
 
-      await db
-        .insert(settings)
-        .values({ key: "default_currency", value: code })
-        .onConflictDoUpdate({
-          target: settings.key,
-          set: { value: code },
-        });
+        await db
+          .insert(settings)
+          .values({ key: "default_currency", value: code })
+          .onConflictDoUpdate({
+            target: settings.key,
+            set: { value: code },
+          });
 
-      return {
-        content: [
-          {
-            type: "text" as const,
-            text: `Default currency set to ${code}`,
-          },
-        ],
-      };
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Default currency set to ${code}`,
+            },
+          ],
+        };
+      } catch (err) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text" as const,
+              text: `set_currency failed: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+        };
+      }
     },
   );
 

@@ -1,0 +1,708 @@
+import { z } from "zod";
+import { eq, and, gte, lt, lte, sql as dsql, desc, inArray } from "drizzle-orm";
+import { v7 as uuidv7 } from "uuid";
+import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { Database } from "../db/connection.js";
+import {
+  transactions,
+  transactionTags,
+  categories,
+  tags,
+  settings,
+} from "../db/schema.js";
+import { isValidISODate } from "../lib/dateUtils.js";
+
+// Type that accepts both Database and PgTransaction for use in helpers
+type QueryRunner = Pick<Database, "insert" | "select" | "update" | "delete">;
+
+async function getDefaultCurrency(db: Database): Promise<string> {
+  const row = await db
+    .select({ value: settings.value })
+    .from(settings)
+    .where(eq(settings.key, "default_currency"));
+  return row[0]?.value ?? "USD";
+}
+
+async function resolveTagIds(
+  db: QueryRunner,
+  tagNames: string[],
+): Promise<string[]> {
+  const uniqueNames = [...new Set(tagNames)];
+  // Insert all tags with ON CONFLICT to handle concurrent requests
+  for (const name of uniqueNames) {
+    await db
+      .insert(tags)
+      .values({ id: uuidv7(), name })
+      .onConflictDoNothing({ target: tags.name });
+  }
+  // Batch-fetch all tag IDs
+  const rows = await db
+    .select({ id: tags.id, name: tags.name })
+    .from(tags)
+    .where(inArray(tags.name, uniqueNames));
+  const nameToId = new Map(rows.map((r) => [r.name, r.id]));
+  const missing = uniqueNames.filter((n) => !nameToId.has(n));
+  if (missing.length > 0) {
+    throw new Error(
+      `Failed to resolve tags: ${missing.join(", ")} (may have been deleted concurrently)`,
+    );
+  }
+  return uniqueNames.map((n) => nameToId.get(n)!);
+}
+
+async function linkTags(
+  db: QueryRunner,
+  transactionId: string,
+  tagIds: string[],
+): Promise<void> {
+  if (tagIds.length === 0) return;
+  await db
+    .insert(transactionTags)
+    .values(tagIds.map((tagId) => ({ transactionId, tagId })))
+    .onConflictDoNothing();
+}
+
+async function fetchTransactionWithDetails(
+  db: Database,
+  txId: string,
+): Promise<{
+  id: string;
+  amount: string;
+  currency: string;
+  description: string | null;
+  date: Date;
+  categoryId: string | null;
+  categoryName: string | null;
+  tags: Array<{ id: string; name: string }>;
+  metadata: unknown;
+  createdAt: Date;
+  updatedAt: Date;
+}> {
+  const rows = await db
+    .select({
+      id: transactions.id,
+      amount: transactions.amount,
+      currency: transactions.currency,
+      description: transactions.description,
+      date: transactions.date,
+      categoryId: transactions.categoryId,
+      categoryName: categories.name,
+      metadata: transactions.metadata,
+      createdAt: transactions.createdAt,
+      updatedAt: transactions.updatedAt,
+    })
+    .from(transactions)
+    .leftJoin(categories, eq(transactions.categoryId, categories.id))
+    .where(eq(transactions.id, txId));
+
+  const tx = rows[0];
+  if (!tx) {
+    throw new Error(`Transaction not found: ${txId}`);
+  }
+
+  const tagRows = await db
+    .select({ id: tags.id, name: tags.name })
+    .from(transactionTags)
+    .innerJoin(tags, eq(transactionTags.tagId, tags.id))
+    .where(eq(transactionTags.transactionId, txId));
+
+  return { ...tx, tags: tagRows };
+}
+
+export function registerTransactionTools(server: McpServer, db: Database) {
+  // --- add_transaction ---
+  server.tool(
+    "add_transaction",
+    "Record an expense or income transaction. Expenses are stored with negative amount. Tags are created on-the-fly if they don't exist.",
+    {
+      amount: z
+        .number()
+        .positive()
+        .finite()
+        .describe(
+          "Transaction amount (always positive; sign is determined by category type or explicit type param)",
+        ),
+      type: z
+        .enum(["expense", "income"])
+        .optional()
+        .describe(
+          "Transaction type. Overrides category type for sign convention. Required when no category_id is provided and transaction is income.",
+        ),
+      currency: z
+        .string()
+        .optional()
+        .describe("Currency code (defaults to user's default currency)"),
+      category_id: z.string().uuid().optional().describe("Category ID"),
+      description: z.string().optional().describe("Transaction description"),
+      date: z
+        .string()
+        .optional()
+        .describe("Transaction date (ISO 8601, defaults to now)"),
+      tags: z
+        .array(z.string())
+        .optional()
+        .describe("Tag names (created on-the-fly if not existing)"),
+      metadata: z
+        .record(z.string(), z.any())
+        .optional()
+        .describe("Arbitrary JSON metadata"),
+    },
+    async (params) => {
+      try {
+        // Resolve currency
+        const currency = params.currency
+          ? params.currency.toUpperCase()
+          : await getDefaultCurrency(db);
+
+        // Resolve category and determine sign
+        let categoryType: string | null = null;
+        if (params.category_id) {
+          const cat = await db
+            .select({ id: categories.id, type: categories.type })
+            .from(categories)
+            .where(eq(categories.id, params.category_id));
+
+          if (cat.length === 0) {
+            return {
+              isError: true,
+              content: [
+                {
+                  type: "text" as const,
+                  text: `Category not found: ${params.category_id}`,
+                },
+              ],
+            };
+          }
+          categoryType = cat[0].type;
+        }
+
+        // Explicit type param overrides category type for sign convention
+        const effectiveType = params.type ?? categoryType ?? "expense";
+        const signedAmount =
+          effectiveType === "income" ? params.amount : -params.amount;
+
+        if (params.date && !isValidISODate(params.date)) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text" as const,
+                text: "Invalid date: must be ISO 8601",
+              },
+            ],
+          };
+        }
+        const txDate = params.date ? new Date(params.date) : new Date();
+        const id = uuidv7();
+
+        await db.transaction(async (tx) => {
+          await tx.insert(transactions).values({
+            id,
+            categoryId: params.category_id ?? null,
+            amount: signedAmount.toFixed(4),
+            currency,
+            description: params.description ?? null,
+            date: txDate,
+            metadata: params.metadata ?? {},
+          });
+
+          // Resolve and link tags
+          if (params.tags && params.tags.length > 0) {
+            const tagIds = await resolveTagIds(tx, params.tags);
+            await linkTags(tx, id, tagIds);
+          }
+        });
+
+        const result = await fetchTransactionWithDetails(db, id);
+
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
+        };
+      } catch (err) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text" as const,
+              text: `add_transaction failed: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  // --- list_transactions ---
+  server.tool(
+    "list_transactions",
+    "List transactions with optional filters: date range, category, tag, currency. Supports pagination with limit/offset.",
+    {
+      date_from: z
+        .string()
+        .optional()
+        .describe("Start date (ISO 8601, inclusive)"),
+      date_to: z.string().optional().describe("End date (ISO 8601, inclusive)"),
+      category_id: z
+        .string()
+        .uuid()
+        .optional()
+        .describe("Filter by category ID"),
+      tag: z.string().optional().describe("Filter by tag name"),
+      currency: z.string().optional().describe("Filter by currency code"),
+      limit: z
+        .number()
+        .int()
+        .positive()
+        .max(1000)
+        .optional()
+        .describe("Max number of results (default 50, max 1000)"),
+      offset: z
+        .number()
+        .int()
+        .min(0)
+        .optional()
+        .describe("Number of results to skip (default 0)"),
+    },
+    async (params) => {
+      try {
+        const conditions = [];
+
+        if (params.date_from) {
+          if (!isValidISODate(params.date_from)) {
+            return {
+              isError: true,
+              content: [
+                {
+                  type: "text" as const,
+                  text: "Invalid date_from: must be ISO 8601",
+                },
+              ],
+            };
+          }
+          const fromDate = new Date(params.date_from);
+          conditions.push(gte(transactions.date, fromDate));
+        }
+        if (params.date_to) {
+          if (!isValidISODate(params.date_to)) {
+            return {
+              isError: true,
+              content: [
+                {
+                  type: "text" as const,
+                  text: "Invalid date_to: must be ISO 8601",
+                },
+              ],
+            };
+          }
+          const toDate = new Date(params.date_to);
+          // For date-only inputs, normalize to start of next UTC day to include the full day.
+          // For datetime inputs, honor the exact timestamp (inclusive).
+          if (/^\d{4}-\d{2}-\d{2}$/.test(params.date_to)) {
+            const exclusiveEnd = new Date(
+              Date.UTC(
+                toDate.getUTCFullYear(),
+                toDate.getUTCMonth(),
+                toDate.getUTCDate() + 1,
+              ),
+            );
+            conditions.push(lt(transactions.date, exclusiveEnd));
+          } else {
+            conditions.push(lte(transactions.date, toDate));
+          }
+        }
+        if (params.category_id) {
+          conditions.push(eq(transactions.categoryId, params.category_id));
+        }
+        if (params.currency) {
+          conditions.push(
+            eq(transactions.currency, params.currency.toUpperCase()),
+          );
+        }
+
+        // If filtering by tag, use a subquery to avoid loading all IDs into memory
+        if (params.tag) {
+          const tagRow = await db
+            .select({ id: tags.id })
+            .from(tags)
+            .where(eq(tags.name, params.tag));
+
+          if (tagRow.length === 0) {
+            // Tag doesn't exist, return empty
+            return {
+              content: [
+                { type: "text" as const, text: JSON.stringify([], null, 2) },
+              ],
+            };
+          }
+
+          conditions.push(
+            inArray(
+              transactions.id,
+              db
+                .select({ id: transactionTags.transactionId })
+                .from(transactionTags)
+                .where(eq(transactionTags.tagId, tagRow[0].id)),
+            ),
+          );
+        }
+
+        const limit = params.limit ?? 50;
+        const offset = params.offset ?? 0;
+
+        const whereClause =
+          conditions.length > 0 ? and(...conditions) : undefined;
+
+        const rows = await db
+          .select({
+            id: transactions.id,
+            amount: transactions.amount,
+            currency: transactions.currency,
+            description: transactions.description,
+            date: transactions.date,
+            categoryId: transactions.categoryId,
+            categoryName: categories.name,
+            metadata: transactions.metadata,
+            createdAt: transactions.createdAt,
+            updatedAt: transactions.updatedAt,
+          })
+          .from(transactions)
+          .leftJoin(categories, eq(transactions.categoryId, categories.id))
+          .where(whereClause)
+          .orderBy(desc(transactions.date), desc(transactions.id))
+          .limit(limit)
+          .offset(offset);
+
+        // Fetch tags for all transactions in batch
+        const txIds = rows.map((r) => r.id);
+        let tagsByTxId: Map<
+          string,
+          Array<{ id: string; name: string }>
+        > = new Map();
+
+        if (txIds.length > 0) {
+          const allTags = await db
+            .select({
+              transactionId: transactionTags.transactionId,
+              tagId: tags.id,
+              tagName: tags.name,
+            })
+            .from(transactionTags)
+            .innerJoin(tags, eq(transactionTags.tagId, tags.id))
+            .where(inArray(transactionTags.transactionId, txIds));
+
+          for (const t of allTags) {
+            if (!tagsByTxId.has(t.transactionId)) {
+              tagsByTxId.set(t.transactionId, []);
+            }
+            tagsByTxId
+              .get(t.transactionId)!
+              .push({ id: t.tagId, name: t.tagName });
+          }
+        }
+
+        const result = rows.map((r) => ({
+          ...r,
+          tags: tagsByTxId.get(r.id) ?? [],
+        }));
+
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
+        };
+      } catch (err) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text" as const,
+              text: `list_transactions failed: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  // --- update_transaction ---
+  server.tool(
+    "update_transaction",
+    "Update a transaction. Supports partial updates of any field including tags.",
+    {
+      id: z.string().uuid().describe("Transaction ID to update"),
+      amount: z
+        .number()
+        .positive()
+        .finite()
+        .optional()
+        .describe(
+          "New amount (positive; sign determined by category type or explicit type param)",
+        ),
+      type: z
+        .enum(["expense", "income"])
+        .optional()
+        .describe(
+          "Transaction type. Overrides category type for sign convention. Useful when updating transactions without a category.",
+        ),
+      currency: z.string().optional().describe("New currency code"),
+      category_id: z
+        .string()
+        .uuid()
+        .nullable()
+        .optional()
+        .describe("New category ID (null to remove category)"),
+      description: z.string().nullable().optional().describe("New description"),
+      date: z.string().optional().describe("New date (ISO 8601)"),
+      tags: z
+        .array(z.string())
+        .optional()
+        .describe("Replace all tags with these tag names"),
+      metadata: z
+        .record(z.string(), z.any())
+        .optional()
+        .describe("Replace metadata"),
+    },
+    async (params) => {
+      try {
+        // Check transaction exists
+        const existing = await db
+          .select({
+            id: transactions.id,
+            categoryId: transactions.categoryId,
+            amount: transactions.amount,
+          })
+          .from(transactions)
+          .where(eq(transactions.id, params.id));
+
+        if (existing.length === 0) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text" as const,
+                text: `Transaction not found: ${params.id}`,
+              },
+            ],
+          };
+        }
+
+        const hasAnyParam =
+          params.amount !== undefined ||
+          params.type !== undefined ||
+          params.currency !== undefined ||
+          params.category_id !== undefined ||
+          params.description !== undefined ||
+          params.date !== undefined ||
+          params.tags !== undefined ||
+          params.metadata !== undefined;
+
+        if (!hasAnyParam) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text" as const,
+                text: "No fields provided to update",
+              },
+            ],
+          };
+        }
+
+        const updates: Record<string, unknown> = {};
+
+        // Determine category for sign convention
+        const effectiveCategoryId =
+          params.category_id !== undefined
+            ? params.category_id
+            : existing[0].categoryId;
+
+        if (
+          params.amount !== undefined ||
+          params.category_id !== undefined ||
+          params.type !== undefined
+        ) {
+          let categoryType: string | null = null;
+          if (effectiveCategoryId) {
+            const cat = await db
+              .select({ type: categories.type })
+              .from(categories)
+              .where(eq(categories.id, effectiveCategoryId));
+            if (cat.length === 0) {
+              return {
+                isError: true,
+                content: [
+                  {
+                    type: "text" as const,
+                    text: `Category not found: ${effectiveCategoryId}`,
+                  },
+                ],
+              };
+            }
+            categoryType = cat[0].type;
+          }
+
+          // Explicit type param overrides category type, matching add_transaction behavior
+          const effectiveType = params.type ?? categoryType;
+
+          if (params.amount !== undefined) {
+            if (effectiveType !== null) {
+              const signedAmount =
+                effectiveType === "income" ? params.amount : -params.amount;
+              updates.amount = signedAmount.toFixed(4);
+            } else {
+              // No type info available - preserve existing sign convention
+              const existingIsIncome = !existing[0].amount.startsWith("-");
+              const signedAmount = existingIsIncome
+                ? params.amount
+                : -params.amount;
+              updates.amount = signedAmount.toFixed(4);
+            }
+          } else if (
+            (params.category_id !== undefined || params.type !== undefined) &&
+            effectiveType !== null
+          ) {
+            // Category or type changed but amount not provided - re-sign using string ops to avoid float precision loss
+            const rawAmount = existing[0].amount;
+            const absStr = rawAmount.startsWith("-")
+              ? rawAmount.slice(1)
+              : rawAmount;
+            updates.amount = effectiveType === "income" ? absStr : `-${absStr}`;
+          }
+        }
+
+        if (params.category_id !== undefined) {
+          updates.categoryId = params.category_id;
+        }
+        if (params.currency !== undefined) {
+          updates.currency = params.currency.toUpperCase();
+        }
+        if (params.description !== undefined) {
+          updates.description = params.description;
+        }
+        if (params.date !== undefined) {
+          if (!isValidISODate(params.date)) {
+            return {
+              isError: true,
+              content: [
+                {
+                  type: "text" as const,
+                  text: "Invalid date: must be ISO 8601",
+                },
+              ],
+            };
+          }
+          updates.date = new Date(params.date);
+        }
+        if (params.metadata !== undefined) {
+          updates.metadata = params.metadata;
+        }
+
+        const hasFieldUpdates = Object.keys(updates).length > 0;
+        const hasTagUpdates = params.tags !== undefined;
+
+        if (hasFieldUpdates || hasTagUpdates) {
+          updates.updatedAt = new Date();
+        }
+
+        await db.transaction(async (tx) => {
+          if (Object.keys(updates).length > 0) {
+            await tx
+              .update(transactions)
+              .set(updates)
+              .where(eq(transactions.id, params.id));
+          }
+
+          // Replace tags if provided
+          if (params.tags !== undefined) {
+            // Delete existing tag associations
+            await tx
+              .delete(transactionTags)
+              .where(eq(transactionTags.transactionId, params.id));
+
+            if (params.tags.length > 0) {
+              const tagIds = await resolveTagIds(tx, params.tags);
+              await linkTags(tx, params.id, tagIds);
+            }
+          }
+        });
+
+        const result = await fetchTransactionWithDetails(db, params.id);
+
+        return {
+          content: [
+            { type: "text" as const, text: JSON.stringify(result, null, 2) },
+          ],
+        };
+      } catch (err) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text" as const,
+              text: `update_transaction failed: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+
+  // --- delete_transaction ---
+  server.tool(
+    "delete_transaction",
+    "Delete a transaction (hard delete). Associated tag links are removed via CASCADE.",
+    {
+      id: z.string().uuid().describe("Transaction ID to delete"),
+    },
+    async ({ id }) => {
+      try {
+        const tx = await db
+          .select({
+            id: transactions.id,
+            description: transactions.description,
+            amount: transactions.amount,
+          })
+          .from(transactions)
+          .where(eq(transactions.id, id));
+
+        if (tx.length === 0) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text" as const,
+                text: `Transaction not found: ${id}`,
+              },
+            ],
+          };
+        }
+
+        // Delete the transaction (transaction_tags cascade automatically via FK)
+        await db.delete(transactions).where(eq(transactions.id, id));
+
+        const desc = tx[0].description ? ` "${tx[0].description}"` : "";
+
+        return {
+          content: [
+            {
+              type: "text" as const,
+              text: `Deleted transaction${desc} (${id}, amount: ${tx[0].amount})`,
+            },
+          ],
+        };
+      } catch (err) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text" as const,
+              text: `delete_transaction failed: ${err instanceof Error ? err.message : String(err)}`,
+            },
+          ],
+        };
+      }
+    },
+  );
+}

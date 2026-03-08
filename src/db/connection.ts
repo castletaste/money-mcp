@@ -1,0 +1,42 @@
+import { drizzle } from "drizzle-orm/postgres-js";
+import postgres from "postgres";
+import * as schemaExports from "./schema.js";
+
+export function getSchemaName(): string {
+  const name = process.env.MCP_MONEY_SCHEMA ?? "mcp_money";
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
+    throw new Error(
+      `Invalid schema name: "${name}". Must match [a-zA-Z_][a-zA-Z0-9_]*`,
+    );
+  }
+  return name;
+}
+
+export function getConnectionString(): string {
+  const url = process.env.DATABASE_URL;
+  if (!url) {
+    throw new Error(
+      "DATABASE_URL environment variable is required. Example: postgresql://user:pass@localhost:5432/mydb",
+    );
+  }
+  return url;
+}
+
+export function createConnection() {
+  const connectionString = getConnectionString();
+  const isDebug = process.env.DEBUG === "true" || process.env.DEBUG === "1";
+  const sql = postgres(
+    connectionString,
+    isDebug
+      ? {
+          debug: (_conn: number, query: string) => {
+            process.stderr.write(`[mcp-money:debug] SQL: ${query}\n`);
+          },
+        }
+      : undefined,
+  );
+  const db = drizzle(sql, { schema: schemaExports });
+  return { db, sql };
+}
+
+export type Database = ReturnType<typeof createConnection>["db"];

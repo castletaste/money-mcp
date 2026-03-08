@@ -93,7 +93,7 @@ describe("health_check", () => {
 
     const data = parseText(result) as Record<string, unknown>;
     expect(data.status).toBe("ok");
-    expect(data.schema_version).toBe(1);
+    expect(data.schema_version).toBe(2);
     expect(typeof data.transaction_count).toBe("number");
     expect(typeof data.category_count).toBe("number");
     expect(data.default_currency).toBeTruthy();

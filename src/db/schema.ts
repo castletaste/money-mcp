@@ -7,6 +7,7 @@ import {
   jsonb,
   date,
   primaryKey,
+  unique,
 } from "drizzle-orm/pg-core";
 
 const SCHEMA_NAME = process.env.MCP_MONEY_SCHEMA ?? "mcp_money";
@@ -91,15 +92,21 @@ export const transactionTags = schema.table(
 
 // --- budgets ---
 
-export const budgets = schema.table("budgets", {
-  id: uuid("id").primaryKey(),
-  categoryId: uuid("category_id")
-    .notNull()
-    .references(() => categories.id),
-  amount: numeric("amount", { precision: 19, scale: 4 }).notNull(),
-  period: text("period", { enum: ["monthly", "weekly"] }).notNull(),
-  startDate: date("start_date").notNull(),
-  createdAt: timestamp("created_at", { withTimezone: true })
-    .notNull()
-    .defaultNow(),
-});
+export const budgets = schema.table(
+  "budgets",
+  {
+    id: uuid("id").primaryKey(),
+    categoryId: uuid("category_id")
+      .notNull()
+      .references(() => categories.id),
+    amount: numeric("amount", { precision: 19, scale: 4 }).notNull(),
+    period: text("period", { enum: ["monthly"] }).notNull(),
+    startDate: date("start_date").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (t) => [
+    unique("budgets_category_id_start_date_key").on(t.categoryId, t.startDate),
+  ],
+);

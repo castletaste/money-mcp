@@ -1,8 +1,9 @@
 import { z } from "zod";
-import { and, gte, lt, eq, sql as dsql } from "drizzle-orm";
+import { and, gte, lt, lte, eq, sql as dsql } from "drizzle-orm";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Database } from "../db/connection.js";
 import { transactions, categories } from "../db/schema.js";
+import { isValidISODate } from "../lib/dateUtils.js";
 
 export function registerSummaryTools(server: McpServer, db: Database) {
   server.tool(
@@ -20,14 +21,46 @@ export function registerSummaryTools(server: McpServer, db: Database) {
         .describe("Filter by category ID"),
     },
     async (params) => {
-      // Add one day to date_to to make end date inclusive of the full day (UTC to avoid DST issues)
-      const endDate = new Date(params.date_to);
-      endDate.setUTCDate(endDate.getUTCDate() + 1);
+      const fromDate = new Date(params.date_from);
+      if (!isValidISODate(params.date_from)) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text" as const,
+              text: "Invalid date_from: must be ISO 8601",
+            },
+          ],
+        };
+      }
+      const toDate = new Date(params.date_to);
+      if (!isValidISODate(params.date_to)) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text" as const,
+              text: "Invalid date_to: must be ISO 8601",
+            },
+          ],
+        };
+      }
+      // For date-only inputs, normalize to start of next UTC day to include the full day.
+      // For datetime inputs, honor the exact timestamp (inclusive).
+      const dateCondition = /^\d{4}-\d{2}-\d{2}$/.test(params.date_to)
+        ? lt(
+            transactions.date,
+            new Date(
+              Date.UTC(
+                toDate.getUTCFullYear(),
+                toDate.getUTCMonth(),
+                toDate.getUTCDate() + 1,
+              ),
+            ),
+          )
+        : lte(transactions.date, toDate);
 
-      const conditions = [
-        gte(transactions.date, new Date(params.date_from)),
-        lt(transactions.date, endDate),
-      ];
+      const conditions = [gte(transactions.date, fromDate), dateCondition];
 
       if (params.category_id) {
         conditions.push(eq(transactions.categoryId, params.category_id));

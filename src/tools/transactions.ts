@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { eq, and, gte, lt, sql as dsql, desc, inArray } from "drizzle-orm";
+import { eq, and, gte, lt, lte, sql as dsql, desc, inArray } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Database } from "../db/connection.js";
@@ -10,6 +10,7 @@ import {
   tags,
   settings,
 } from "../db/schema.js";
+import { isValidISODate } from "../lib/dateUtils.js";
 
 // Type that accepts both Database and PgTransaction for use in helpers
 type QueryRunner = Pick<Database, "insert" | "select" | "update" | "delete">;
@@ -26,8 +27,9 @@ async function resolveTagIds(
   db: QueryRunner,
   tagNames: string[],
 ): Promise<string[]> {
+  const uniqueNames = [...new Set(tagNames)];
   // Insert all tags with ON CONFLICT to handle concurrent requests
-  for (const name of tagNames) {
+  for (const name of uniqueNames) {
     await db
       .insert(tags)
       .values({ id: uuidv7(), name })
@@ -37,9 +39,9 @@ async function resolveTagIds(
   const rows = await db
     .select({ id: tags.id, name: tags.name })
     .from(tags)
-    .where(inArray(tags.name, tagNames));
+    .where(inArray(tags.name, uniqueNames));
   const nameToId = new Map(rows.map((r) => [r.name, r.id]));
-  return tagNames.map((n) => nameToId.get(n)!);
+  return uniqueNames.map((n) => nameToId.get(n)!);
 }
 
 async function linkTags(
@@ -50,7 +52,8 @@ async function linkTags(
   if (tagIds.length === 0) return;
   await db
     .insert(transactionTags)
-    .values(tagIds.map((tagId) => ({ transactionId, tagId })));
+    .values(tagIds.map((tagId) => ({ transactionId, tagId })))
+    .onConflictDoNothing();
 }
 
 async function fetchTransactionWithDetails(
@@ -171,6 +174,14 @@ export function registerTransactionTools(server: McpServer, db: Database) {
         effectiveType === "income" ? params.amount : -params.amount;
 
       const txDate = params.date ? new Date(params.date) : new Date();
+      if (params.date && !isValidISODate(params.date)) {
+        return {
+          isError: true,
+          content: [
+            { type: "text" as const, text: "Invalid date: must be ISO 8601" },
+          ],
+        };
+      }
       const id = uuidv7();
 
       await db.transaction(async (tx) => {
@@ -235,13 +246,47 @@ export function registerTransactionTools(server: McpServer, db: Database) {
       const conditions = [];
 
       if (params.date_from) {
-        conditions.push(gte(transactions.date, new Date(params.date_from)));
+        const fromDate = new Date(params.date_from);
+        if (!isValidISODate(params.date_from)) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text" as const,
+                text: "Invalid date_from: must be ISO 8601",
+              },
+            ],
+          };
+        }
+        conditions.push(gte(transactions.date, fromDate));
       }
       if (params.date_to) {
-        // Add one day to make end date inclusive of the full day (UTC to avoid DST issues)
-        const endDate = new Date(params.date_to);
-        endDate.setUTCDate(endDate.getUTCDate() + 1);
-        conditions.push(lt(transactions.date, endDate));
+        const toDate = new Date(params.date_to);
+        if (!isValidISODate(params.date_to)) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text" as const,
+                text: "Invalid date_to: must be ISO 8601",
+              },
+            ],
+          };
+        }
+        // For date-only inputs, normalize to start of next UTC day to include the full day.
+        // For datetime inputs, honor the exact timestamp (inclusive).
+        if (/^\d{4}-\d{2}-\d{2}$/.test(params.date_to)) {
+          const exclusiveEnd = new Date(
+            Date.UTC(
+              toDate.getUTCFullYear(),
+              toDate.getUTCMonth(),
+              toDate.getUTCDate() + 1,
+            ),
+          );
+          conditions.push(lt(transactions.date, exclusiveEnd));
+        } else {
+          conditions.push(lte(transactions.date, toDate));
+        }
       }
       if (params.category_id) {
         conditions.push(eq(transactions.categoryId, params.category_id));
@@ -478,7 +523,16 @@ export function registerTransactionTools(server: McpServer, db: Database) {
         updates.description = params.description;
       }
       if (params.date !== undefined) {
-        updates.date = new Date(params.date);
+        const d = new Date(params.date);
+        if (!isValidISODate(params.date)) {
+          return {
+            isError: true,
+            content: [
+              { type: "text" as const, text: "Invalid date: must be ISO 8601" },
+            ],
+          };
+        }
+        updates.date = d;
       }
       if (params.metadata !== undefined) {
         updates.metadata = params.metadata;

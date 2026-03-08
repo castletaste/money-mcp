@@ -1,7 +1,7 @@
 import type postgres from "postgres";
 import { getSchemaName } from "./connection.js";
 
-const CURRENT_VERSION = 1;
+const CURRENT_VERSION = 2;
 
 export async function migrate(sql: postgres.Sql): Promise<void> {
   const schemaName = getSchemaName();
@@ -17,26 +17,72 @@ export async function migrate(sql: postgres.Sql): Promise<void> {
     )
   `);
 
-  // Check current version
-  const rows = await sql.unsafe(
-    `SELECT version FROM "${schemaName}".schema_version ORDER BY applied_at DESC LIMIT 1`,
-  );
-  const currentVersion = rows.length > 0 ? Number(rows[0].version) : 0;
-
-  if (currentVersion >= CURRENT_VERSION) {
-    return;
-  }
-
-  // Apply migrations in a transaction
+  // Apply migrations in a transaction, locking schema_version to serialize
+  // concurrent startup attempts and prevent duplicate migration runs.
   await sql.begin(async (tx) => {
+    await tx.unsafe(
+      `LOCK TABLE "${schemaName}".schema_version IN EXCLUSIVE MODE`,
+    );
+
+    const rows = await tx.unsafe(
+      `SELECT version FROM "${schemaName}".schema_version ORDER BY applied_at DESC LIMIT 1`,
+    );
+    const currentVersion = rows.length > 0 ? Number(rows[0].version) : 0;
+
+    if (currentVersion >= CURRENT_VERSION) {
+      return;
+    }
+
     if (currentVersion < 1) {
       await applyV1(tx, schemaName);
+    }
+    if (currentVersion < 2) {
+      await applyV2(tx, schemaName);
     }
 
     await tx.unsafe(
       `INSERT INTO "${schemaName}".schema_version (version) VALUES (${CURRENT_VERSION})`,
     );
   });
+}
+
+async function applyV2(
+  tx: postgres.TransactionSql,
+  schemaName: string,
+): Promise<void> {
+  // The product is monthly-only. Remove any non-monthly budgets first so that
+  // the subsequent dedup (which keys on category_id + start_date without period)
+  // cannot silently drop a valid row of a different period type.
+  await tx.unsafe(`
+    DELETE FROM "${schemaName}".budgets WHERE period != 'monthly'
+  `);
+
+  // Remove duplicate (category_id, start_date) rows before adding the unique constraint.
+  // Keeps the most recently created budget per pair; safe to run even if no duplicates exist.
+  await tx.unsafe(`
+    DELETE FROM "${schemaName}".budgets
+    WHERE id NOT IN (
+      SELECT DISTINCT ON (category_id, start_date) id
+      FROM "${schemaName}".budgets
+      ORDER BY category_id, start_date, created_at DESC
+    )
+  `);
+
+  await tx.unsafe(`
+    ALTER TABLE "${schemaName}".budgets
+    ADD CONSTRAINT budgets_category_id_start_date_key UNIQUE (category_id, start_date)
+  `);
+
+  // Narrow the period check constraint to enforce monthly-only at the DB level.
+  // The original unnamed constraint is typically named budgets_period_check by PostgreSQL.
+  await tx.unsafe(`
+    ALTER TABLE "${schemaName}".budgets
+    DROP CONSTRAINT IF EXISTS budgets_period_check
+  `);
+  await tx.unsafe(`
+    ALTER TABLE "${schemaName}".budgets
+    ADD CONSTRAINT budgets_period_check CHECK (period = 'monthly')
+  `);
 }
 
 async function applyV1(

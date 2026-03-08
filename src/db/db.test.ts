@@ -41,7 +41,7 @@ describe("migrate", () => {
       `SELECT version FROM "${TEST_SCHEMA}".schema_version`,
     );
     expect(rows.length).toBe(1);
-    expect(Number(rows[0].version)).toBe(1);
+    expect(Number(rows[0].version)).toBe(2);
   });
 
   test("is idempotent - running again does not error or duplicate version", async () => {

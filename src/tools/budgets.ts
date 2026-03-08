@@ -4,6 +4,7 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Database } from "../db/connection.js";
 import { budgets, categories, transactions } from "../db/schema.js";
 import { v7 as uuidv7 } from "uuid";
+import { isValidISODate } from "../lib/dateUtils.js";
 
 export function registerBudgetTools(server: McpServer, db: Database) {
   // --- set_budget ---
@@ -39,64 +40,49 @@ export function registerBudgetTools(server: McpServer, db: Database) {
         };
       }
 
-      // Normalize start_date to first of the month to enforce one budget per category per month
-      const parsedDate = new Date(params.start_date);
-      const normalizedStartDate = `${parsedDate.getUTCFullYear()}-${String(parsedDate.getUTCMonth() + 1).padStart(2, "0")}-01`;
-
-      // Check if budget already exists for this category in the same month
-      const [existing] = await db
-        .select({ id: budgets.id })
-        .from(budgets)
-        .where(
-          and(
-            eq(budgets.categoryId, params.category_id),
-            eq(budgets.startDate, normalizedStartDate),
-          ),
-        )
-        .limit(1);
-
-      if (existing) {
-        // Update existing budget
-        await db
-          .update(budgets)
-          .set({ amount: params.amount.toFixed(4) })
-          .where(eq(budgets.id, existing.id));
-
-        const [updated] = await db
-          .select()
-          .from(budgets)
-          .where(eq(budgets.id, existing.id));
-
+      // Reject non-date-only inputs (datetimes are not valid per tool contract)
+      if (
+        !/^\d{4}-\d{2}-\d{2}$/.test(params.start_date) ||
+        !isValidISODate(params.start_date)
+      ) {
         return {
+          isError: true,
           content: [
             {
               type: "text" as const,
-              text: JSON.stringify({ ...updated, _action: "updated" }, null, 2),
+              text: "Invalid start_date: must be ISO 8601 (YYYY-MM-DD)",
             },
           ],
         };
       }
+      // Normalize start_date to first of the month to enforce one budget per category per month
+      const parsedDate = new Date(params.start_date);
+      const normalizedStartDate = `${parsedDate.getUTCFullYear()}-${String(parsedDate.getUTCMonth() + 1).padStart(2, "0")}-01`;
 
-      // Create new budget
-      const id = uuidv7();
-      await db.insert(budgets).values({
-        id,
-        categoryId: params.category_id,
-        amount: params.amount.toFixed(4),
-        period: "monthly",
-        startDate: normalizedStartDate,
-      });
+      // Upsert: atomically create or update budget for this category/month
+      const newId = uuidv7();
+      const [row] = await db
+        .insert(budgets)
+        .values({
+          id: newId,
+          categoryId: params.category_id,
+          amount: params.amount.toFixed(4),
+          period: "monthly",
+          startDate: normalizedStartDate,
+        })
+        .onConflictDoUpdate({
+          target: [budgets.categoryId, budgets.startDate],
+          set: { amount: params.amount.toFixed(4) },
+        })
+        .returning();
 
-      const [created] = await db
-        .select()
-        .from(budgets)
-        .where(eq(budgets.id, id));
+      const action = row.id === newId ? "created" : "updated";
 
       return {
         content: [
           {
             type: "text" as const,
-            text: JSON.stringify({ ...created, _action: "created" }, null, 2),
+            text: JSON.stringify({ ...row, _action: action }, null, 2),
           },
         ],
       };
@@ -126,9 +112,31 @@ export function registerBudgetTools(server: McpServer, db: Database) {
       let month: number;
 
       if (params.month) {
+        if (!/^\d{4}-\d{2}$/.test(params.month)) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text" as const,
+                text: "Invalid month format: expected YYYY-MM",
+              },
+            ],
+          };
+        }
         const parts = params.month.split("-");
         year = parseInt(parts[0], 10);
         month = parseInt(parts[1], 10);
+        if (month < 1 || month > 12) {
+          return {
+            isError: true,
+            content: [
+              {
+                type: "text" as const,
+                text: "Invalid month: must be between 01 and 12",
+              },
+            ],
+          };
+        }
       } else {
         const now = new Date();
         year = now.getUTCFullYear();

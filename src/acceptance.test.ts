@@ -107,7 +107,7 @@ describe("acceptance: auto-migration on clean database", () => {
       `SELECT version FROM "${TEST_SCHEMA}".schema_version ORDER BY applied_at DESC LIMIT 1`,
     );
     expect(rows.length).toBe(1);
-    expect(Number(rows[0].version)).toBe(1);
+    expect(Number(rows[0].version)).toBe(2);
   });
 
   test("migration creates all expected tables", async () => {
@@ -213,7 +213,7 @@ describe("acceptance: end-to-end MCP flow", () => {
       category_count: number;
     };
     expect(health.status).toBe("ok");
-    expect(health.schema_version).toBe(1);
+    expect(health.schema_version).toBe(2);
     expect(health.transaction_count).toBeGreaterThan(0);
     expect(health.category_count).toBeGreaterThan(0);
   });

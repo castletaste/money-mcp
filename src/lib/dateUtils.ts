@@ -4,12 +4,12 @@
  *
  * Accepts:
  * - Date-only: YYYY-MM-DD (parsed as UTC midnight by JS)
- * - Datetime: YYYY-MM-DDTHH:MM[:SS[.mmm]][Z|±HH:MM]
+ * - Datetime: YYYY-MM-DDTHH:MM[:SS[.mmm]](Z|±HH:MM) — timezone required
  */
 export function isValidISODate(str: string): boolean {
   // Enforce ISO 8601 format before attempting to parse (seconds are optional)
   if (
-    !/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2})?)?$/.test(
+    !/^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}(:\d{2}(\.\d+)?)?(Z|[+-]\d{2}:?\d{2}))?$/.test(
       str,
     )
   ) {

@@ -41,6 +41,12 @@ async function resolveTagIds(
     .from(tags)
     .where(inArray(tags.name, uniqueNames));
   const nameToId = new Map(rows.map((r) => [r.name, r.id]));
+  const missing = uniqueNames.filter((n) => !nameToId.has(n));
+  if (missing.length > 0) {
+    throw new Error(
+      `Failed to resolve tags: ${missing.join(", ")} (may have been deleted concurrently)`,
+    );
+  }
   return uniqueNames.map((n) => nameToId.get(n)!);
 }
 

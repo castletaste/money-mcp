@@ -30,32 +30,34 @@ export function registerTagTools(server: McpServer, db: Database) {
       name: z.string().describe("Tag name (must be unique)"),
     },
     async ({ name }) => {
-      // Check for existing tag with same name
-      const existing = await db
-        .select({ id: tags.id })
-        .from(tags)
-        .where(eq(tags.name, name));
+      const id = uuidv7();
+      const inserted = await db
+        .insert(tags)
+        .values({ id, name })
+        .onConflictDoNothing({ target: tags.name })
+        .returning({ id: tags.id });
 
-      if (existing.length > 0) {
+      if (inserted.length === 0) {
+        const existing = await db
+          .select({ id: tags.id })
+          .from(tags)
+          .where(eq(tags.name, name));
         return {
           isError: true,
           content: [
             {
               type: "text" as const,
-              text: `Tag with name "${name}" already exists (id: ${existing[0].id})`,
+              text: `Tag with name "${name}" already exists (id: ${existing[0]?.id ?? "unknown"})`,
             },
           ],
         };
       }
 
-      const id = uuidv7();
-      await db.insert(tags).values({ id, name });
-
       return {
         content: [
           {
             type: "text" as const,
-            text: JSON.stringify({ id, name }),
+            text: JSON.stringify({ id: inserted[0].id, name }),
           },
         ],
       };

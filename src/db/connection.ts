@@ -24,7 +24,17 @@ export function getConnectionString(): string {
 
 export function createConnection() {
   const connectionString = getConnectionString();
-  const sql = postgres(connectionString);
+  const isDebug = process.env.DEBUG === "true" || process.env.DEBUG === "1";
+  const sql = postgres(
+    connectionString,
+    isDebug
+      ? {
+          debug: (_conn: number, query: string) => {
+            process.stderr.write(`[mcp-money:debug] SQL: ${query}\n`);
+          },
+        }
+      : undefined,
+  );
   const db = drizzle(sql, { schema: schemaExports });
   return { db, sql };
 }

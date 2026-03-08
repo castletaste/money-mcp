@@ -99,38 +99,35 @@ export function registerCategoryTools(server: McpServer, db: Database) {
         }
       }
 
-      // Check for duplicate name
-      const existing = await db
-        .select({ id: categories.id })
-        .from(categories)
-        .where(eq(categories.name, name));
+      const id = uuidv7();
+      const inserted = await db
+        .insert(categories)
+        .values({ id, name, type, parentId: parent_id ?? null })
+        .onConflictDoNothing({ target: categories.name })
+        .returning({ id: categories.id });
 
-      if (existing.length > 0) {
+      if (inserted.length === 0) {
+        const existing = await db
+          .select({ id: categories.id })
+          .from(categories)
+          .where(eq(categories.name, name));
         return {
           isError: true,
           content: [
             {
               type: "text" as const,
-              text: `Category with name "${name}" already exists (id: ${existing[0].id})`,
+              text: `Category with name "${name}" already exists (id: ${existing[0]?.id ?? "unknown"})`,
             },
           ],
         };
       }
-
-      const id = uuidv7();
-      await db.insert(categories).values({
-        id,
-        name,
-        type,
-        parentId: parent_id ?? null,
-      });
 
       return {
         content: [
           {
             type: "text" as const,
             text: JSON.stringify({
-              id,
+              id: inserted[0].id,
               name,
               type,
               parentId: parent_id ?? null,

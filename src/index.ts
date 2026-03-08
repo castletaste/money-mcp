@@ -1,12 +1,17 @@
 #!/usr/bin/env bun
 
-import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { startServer } from "./server.js";
+import { log } from "./lib/logger.js";
 
-const server = new McpServer({
-  name: "mcp-money",
-  version: "0.1.0",
-});
+try {
+  const { server } = await startServer();
 
-const transport = new StdioServerTransport();
-await server.connect(transport);
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+
+  log("Server connected via stdio transport");
+} catch (error) {
+  log(`Fatal error: ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+}

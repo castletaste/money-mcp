@@ -1,5 +1,6 @@
 import { v7 as uuidv7 } from "uuid";
 import type postgres from "postgres";
+import { getSchemaName } from "./connection.js";
 
 interface DefaultCategory {
   name: string;
@@ -18,10 +19,6 @@ const DEFAULT_CATEGORIES: DefaultCategory[] = [
   { name: "Shopping", type: "expense" },
   { name: "Other", type: "expense" },
 ];
-
-function getSchemaName(): string {
-  return process.env.MCP_MONEY_SCHEMA ?? "mcp_money";
-}
 
 export async function seed(sql: postgres.Sql): Promise<void> {
   const schemaName = getSchemaName();

@@ -3,7 +3,7 @@ import { eq, count } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Database } from "../db/connection.js";
-import { categories, transactions } from "../db/schema.js";
+import { categories, transactions, budgets } from "../db/schema.js";
 
 export function registerCategoryTools(server: McpServer, db: Database) {
   // --- list_categories ---
@@ -99,6 +99,24 @@ export function registerCategoryTools(server: McpServer, db: Database) {
         }
       }
 
+      // Check for duplicate name
+      const existing = await db
+        .select({ id: categories.id })
+        .from(categories)
+        .where(eq(categories.name, name));
+
+      if (existing.length > 0) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text" as const,
+              text: `Category with name "${name}" already exists (id: ${existing[0].id})`,
+            },
+          ],
+        };
+      }
+
       const id = uuidv7();
       await db.insert(categories).values({
         id,
@@ -126,7 +144,7 @@ export function registerCategoryTools(server: McpServer, db: Database) {
   // --- delete_category ---
   server.tool(
     "delete_category",
-    "Delete a category. Fails if any transactions reference it (RESTRICT).",
+    "Delete a category. Fails if transactions, budgets, or child categories reference it.",
     {
       id: z.string().uuid().describe("Category ID to delete"),
     },
@@ -160,6 +178,25 @@ export function registerCategoryTools(server: McpServer, db: Database) {
             {
               type: "text" as const,
               text: `Cannot delete category "${cat[0].name}": ${txRefCount} transaction(s) still reference it. Remove or reassign them first.`,
+            },
+          ],
+        };
+      }
+
+      // Check for referencing budgets
+      const budgetCount = await db
+        .select({ count: count() })
+        .from(budgets)
+        .where(eq(budgets.categoryId, id));
+
+      const budgetRefCount = Number(budgetCount[0]?.count ?? 0);
+      if (budgetRefCount > 0) {
+        return {
+          isError: true,
+          content: [
+            {
+              type: "text" as const,
+              text: `Cannot delete category "${cat[0].name}": ${budgetRefCount} budget(s) still reference it. Delete them first.`,
             },
           ],
         };

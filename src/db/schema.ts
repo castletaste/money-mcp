@@ -8,7 +8,6 @@ import {
   date,
   primaryKey,
 } from "drizzle-orm/pg-core";
-import { relations } from "drizzle-orm";
 
 const SCHEMA_NAME = process.env.MCP_MONEY_SCHEMA ?? "mcp_money";
 
@@ -42,17 +41,6 @@ export const categories = schema.table("categories", {
     .defaultNow(),
 });
 
-export const categoriesRelations = relations(categories, ({ one, many }) => ({
-  parent: one(categories, {
-    fields: [categories.parentId],
-    references: [categories.id],
-    relationName: "categoryParent",
-  }),
-  children: many(categories, { relationName: "categoryParent" }),
-  transactions: many(transactions),
-  budgets: many(budgets),
-}));
-
 // --- tags ---
 
 export const tags = schema.table("tags", {
@@ -81,17 +69,6 @@ export const transactions = schema.table("transactions", {
     .defaultNow(),
 });
 
-export const transactionsRelations = relations(
-  transactions,
-  ({ one, many }) => ({
-    category: one(categories, {
-      fields: [transactions.categoryId],
-      references: [categories.id],
-    }),
-    transactionTags: many(transactionTags),
-  }),
-);
-
 // --- transaction_tags ---
 
 export const transactionTags = schema.table(
@@ -105,20 +82,6 @@ export const transactionTags = schema.table(
       .references(() => tags.id, { onDelete: "cascade" }),
   },
   (t) => [primaryKey({ columns: [t.transactionId, t.tagId] })],
-);
-
-export const transactionTagsRelations = relations(
-  transactionTags,
-  ({ one }) => ({
-    transaction: one(transactions, {
-      fields: [transactionTags.transactionId],
-      references: [transactions.id],
-    }),
-    tag: one(tags, {
-      fields: [transactionTags.tagId],
-      references: [tags.id],
-    }),
-  }),
 );
 
 // --- budgets ---
@@ -135,10 +98,3 @@ export const budgets = schema.table("budgets", {
     .notNull()
     .defaultNow(),
 });
-
-export const budgetsRelations = relations(budgets, ({ one }) => ({
-  category: one(categories, {
-    fields: [budgets.categoryId],
-    references: [categories.id],
-  }),
-}));

@@ -2,6 +2,10 @@ import { drizzle } from "drizzle-orm/postgres-js";
 import postgres from "postgres";
 import * as schemaExports from "./schema.js";
 
+export function getSchemaName(): string {
+  return process.env.MCP_MONEY_SCHEMA ?? "mcp_money";
+}
+
 export function getConnectionString(): string {
   const url = process.env.DATABASE_URL;
   if (!url) {

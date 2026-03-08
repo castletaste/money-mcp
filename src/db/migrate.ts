@@ -1,10 +1,7 @@
 import type postgres from "postgres";
+import { getSchemaName } from "./connection.js";
 
 const CURRENT_VERSION = 1;
-
-function getSchemaName(): string {
-  return process.env.MCP_MONEY_SCHEMA ?? "mcp_money";
-}
 
 export async function migrate(sql: postgres.Sql): Promise<void> {
   const schemaName = getSchemaName();

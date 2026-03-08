@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { eq, count } from "drizzle-orm";
+import { eq, count, desc } from "drizzle-orm";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Database } from "../db/connection.js";
 import {
@@ -50,7 +50,7 @@ export function registerUtilTools(server: McpServer, db: Database) {
         const versionRows = await db
           .select({ version: schemaVersion.version })
           .from(schemaVersion)
-          .orderBy(schemaVersion.appliedAt)
+          .orderBy(desc(schemaVersion.appliedAt))
           .limit(1);
 
         // Transaction count

@@ -89,7 +89,7 @@ export function registerSummaryTools(server: McpServer, db: Database) {
         const amount = Number(row.totalAmount);
         currencyTotals[currency].count += row.txCount;
         currencyTotals[currency].net += amount;
-        if (amount > 0) {
+        if (row.categoryType === "income") {
           currencyTotals[currency].income += amount;
         } else {
           currencyTotals[currency].expenses += amount;

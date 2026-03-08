@@ -128,7 +128,9 @@ export function registerTransactionTools(server: McpServer, db: Database) {
     },
     async (params) => {
       // Resolve currency
-      const currency = params.currency ?? (await getDefaultCurrency(db));
+      const currency = params.currency
+        ? params.currency.toUpperCase()
+        : await getDefaultCurrency(db);
 
       // Resolve category and determine sign
       let categoryType: string | null = null;
@@ -445,10 +447,14 @@ export function registerTransactionTools(server: McpServer, db: Database) {
         updates.metadata = params.metadata;
       }
 
-      updates.updatedAt = new Date();
+      const hasFieldUpdates = Object.keys(updates).length > 0;
+      const hasTagUpdates = params.tags !== undefined;
 
-      if (Object.keys(updates).length > 1) {
-        // more than just updatedAt
+      if (hasFieldUpdates || hasTagUpdates) {
+        updates.updatedAt = new Date();
+      }
+
+      if (Object.keys(updates).length > 0) {
         await db
           .update(transactions)
           .set(updates)
@@ -504,10 +510,7 @@ export function registerTransactionTools(server: McpServer, db: Database) {
         };
       }
 
-      // Delete transaction_tags first, then the transaction
-      await db
-        .delete(transactionTags)
-        .where(eq(transactionTags.transactionId, id));
+      // Delete the transaction (transaction_tags cascade automatically via FK)
       await db.delete(transactions).where(eq(transactions.id, id));
 
       const desc = tx[0].description ? ` "${tx[0].description}"` : "";

@@ -6,11 +6,7 @@ Uses PostgreSQL with Drizzle ORM. Auto-migrates on startup.
 
 ## Installation
 
-```bash
-npx mcp-money
-```
-
-Or with Bun:
+Requires [Bun](https://bun.sh/) runtime.
 
 ```bash
 bunx mcp-money
@@ -24,7 +20,7 @@ Add to your MCP client config (e.g. Claude Desktop):
 {
   "mcpServers": {
     "money": {
-      "command": "npx",
+      "command": "bunx",
       "args": ["mcp-money"],
       "env": {
         "DATABASE_URL": "postgresql://user:pass@localhost:5432/mydb"
@@ -59,7 +55,7 @@ Add to your MCP client config (e.g. Claude Desktop):
 |------|-------------|
 | `list_categories` | List all categories grouped by type (expense/income). |
 | `create_category` | Create a category with name, type, optional parent (one nesting level). |
-| `delete_category` | Delete a category. Fails if transactions reference it (RESTRICT). |
+| `delete_category` | Delete a category. Fails if transactions, budgets, or child categories reference it. |
 
 ### Tags
 

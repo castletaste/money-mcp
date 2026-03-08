@@ -230,6 +230,31 @@ describe("get_budget_status", () => {
     expect(Number(status.budgets[0].currencies[0].spent)).toBe(40);
   });
 
+  test("detects over-budget spending", async () => {
+    // Set a small budget for transport: 20, but we already spent 40
+    await callTool("set_budget", {
+      category_id: transportCategoryId,
+      amount: 20,
+      start_date: "2026-03-01",
+    });
+
+    const result = await callTool("get_budget_status", {
+      month: "2026-03",
+      category_id: transportCategoryId,
+    });
+    const status = parseText(result) as any;
+
+    expect(status.budgets.length).toBe(1);
+    const transportBudget = status.budgets[0];
+    const usdEntry = transportBudget.currencies.find(
+      (c: any) => c.currency === "USD",
+    );
+    expect(usdEntry).toBeDefined();
+    expect(Number(usdEntry.spent)).toBe(40);
+    expect(usdEntry.overBudget).toBe(true);
+    expect(Number(usdEntry.remaining)).toBeLessThan(0);
+  });
+
   test("shows zero spending when no transactions in period", async () => {
     const result = await callTool("get_budget_status", {
       month: "2026-04",

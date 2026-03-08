@@ -4,9 +4,12 @@ MCP server for personal finance tracking. Designed for AI assistants — track e
 
 Uses PostgreSQL with Drizzle ORM. Auto-migrates on startup.
 
-## Installation
+## Requirements
 
-Requires [Bun](https://bun.sh/) runtime.
+- [Bun](https://bun.sh/) runtime
+- PostgreSQL 14+
+
+## Installation
 
 ```bash
 bunx mcp-money

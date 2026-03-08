@@ -11,8 +11,10 @@ import { registerUtilTools } from "./tools/utils.js";
 import { log, debug } from "./lib/logger.js";
 import type postgres from "postgres";
 
-// Read version from package.json
-const pkg = await Bun.file(new URL("../package.json", import.meta.url)).json();
+// Read version from package.json (Node-compatible)
+import { createRequire } from "node:module";
+const require = createRequire(import.meta.url);
+const pkg = require("../package.json");
 
 export interface ServerContext {
   server: McpServer;

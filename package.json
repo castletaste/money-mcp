@@ -2,10 +2,19 @@
   "name": "mcp-money",
   "version": "0.1.0",
   "description": "MCP server for personal finance tracking",
-  "module": "src/index.ts",
   "type": "module",
+  "main": "src/index.ts",
   "bin": {
-    "mcp-money": "./src/index.ts"
+    "mcp-money": "./bin/mcp-money.js"
+  },
+  "files": [
+    "bin/",
+    "src/",
+    "package.json",
+    "README.md"
+  ],
+  "exports": {
+    ".": "./src/index.ts"
   },
   "scripts": {
     "start": "bun src/index.ts",

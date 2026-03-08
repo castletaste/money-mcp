@@ -144,11 +144,11 @@
 - Изменить: `package.json` (bin, files, main, exports, name)
 - Создать: `bin/mcp-money.js` (CLI-обёртка)
 
-- [ ] Добавить CLI-точку входа с shebang для запуска сервера
-- [ ] Настроить package.json для публикации в npm: имя `mcp-money`, bin, files, exports
-- [ ] Проверить что `bun bin/mcp-money.js` запускает сервер
-- [ ] Проверить что пример MCP-конфигурации из DESIGN.md работает с `bunx`
-- [ ] Запустить `bun test` — должны пройти перед задачей 11
+- [x] Добавить CLI-точку входа с shebang для запуска сервера
+- [x] Настроить package.json для публикации в npm: имя `mcp-money`, bin, files, exports
+- [x] Проверить что `bun bin/mcp-money.js` запускает сервер
+- [x] Проверить что пример MCP-конфигурации из DESIGN.md работает с `bunx`
+- [x] Запустить `bun test` — должны пройти перед задачей 11
 
 ### Задача 11: Проверка критериев приёмки
 

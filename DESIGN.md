@@ -247,7 +247,7 @@ All of C, plus transfer_between_accounts, set_goal, get_forecast, add_tag, merge
 
 **Critical take**: Every tool you add is a tool the LLM has to understand and choose from. More tools = more token usage per call = slower responses = worse UX. Keep the tool list tight.
 
-### ✅ Decision: Variant B adapted — 11 tools (no accounts, with tags)
+### ✅ Decision: Variant B adapted — 16 tools (no accounts, with tags)
 
 Since accounts are removed and tags added, the final tool list:
 
@@ -260,12 +260,21 @@ Since accounts are removed and tags added, the final tool list:
 | `get_summary` | Spending by category for a period, totals, averages |
 | `list_categories` | Show available categories |
 | `create_category` | Add custom category |
+| `delete_category` | Remove a category (fails if transactions reference it) |
 | `list_tags` | Show all tags |
 | `create_tag` | Add a new tag |
+| `delete_tag` | Remove a tag (removes from all transactions) |
 | `set_budget` | Set monthly budget for category |
 | `get_budget_status` | Check budget vs actual spending |
+| `delete_budget` | Remove a budget |
 | `set_currency` | Change default currency for new transactions |
 | `health_check` | Report DB status, version, stats |
+
+**Destructive tool behavior**:
+- `delete_transaction` — hard delete, no confirmation
+- `delete_category` — fails with error if any transactions still reference it (RESTRICT). User must reassign or delete transactions first.
+- `delete_tag` — removes tag and all transaction_tags associations (CASCADE). Transactions themselves are untouched.
+- `delete_budget` — hard delete, no confirmation
 
 **Key insight**: `get_summary` is the most important tool after `add_transaction`. Without summaries, the server is just a dumb INSERT machine. The LLM should be able to say "You spent $450 on food this month, 20% over budget."
 
@@ -598,7 +607,7 @@ and it's stored in your PostgreSQL database — with categories, budgets, and sp
 | Aspect | Decision |
 |--------|----------|
 | **Positioning** | B — Expense tracker for AI assistants |
-| **MVP scope** | B adapted — Transactions + categories + tags + summaries + basic budgets (11 tools + health_check + set_currency). **No accounts.** |
+| **MVP scope** | B adapted — Transactions + categories + tags + summaries + basic budgets (16 tools). **No accounts.** |
 | **Runtime** | C — Bun-primary, Node-compatible (no Bun-specific APIs in production code) |
 | **MCP transport** | A — stdio only via `@modelcontextprotocol/sdk` |
 | **Database** | A — PostgreSQL only, via Drizzle ORM + postgres.js driver |
@@ -674,7 +683,7 @@ and it's stored in your PostgreSQL database — with categories, budgets, and sp
 
 ## Phase 3: Core Tools (Day 4-7)
 
-**Goals**: All 13 MVP tools working.
+**Goals**: All 16 MVP tools working.
 
 **Tasks**:
 - `add_transaction` — with amount, description, date, category, tags
@@ -684,10 +693,13 @@ and it's stored in your PostgreSQL database — with categories, budgets, and sp
 - `get_summary` — spending by category for a period, totals, averages
 - `list_categories` — all categories
 - `create_category` — custom category
+- `delete_category` — fails if transactions reference it (RESTRICT)
 - `list_tags` — all tags
 - `create_tag` — add a new tag
+- `delete_tag` — removes tag and associations (CASCADE)
 - `set_budget` — monthly budget for a category
 - `get_budget_status` — actual vs budget for current month
+- `delete_budget` — remove a budget
 - `set_currency` — change default currency for new transactions
 - `health_check` — DB status, version, stats
 - Integration tests + E2E MCP protocol tests for each tool
@@ -874,12 +886,12 @@ mcp-money/
 13. Implement `add_transaction` tool
 14. Implement `list_transactions` tool with filters
 15. Implement `update_transaction` and `delete_transaction` tools
-16. Implement `list_categories` and `create_category` tools
-16b. Implement `list_tags` and `create_tag` tools
-17. Implement `get_summary` tool (spending by category/period)
-18. Implement `set_budget` and `get_budget_status` tools
-19. Implement `set_currency` tool
-20. Write integration tests + E2E MCP protocol tests for all tools
+16. Implement `list_categories`, `create_category`, and `delete_category` tools
+17. Implement `list_tags`, `create_tag`, and `delete_tag` tools
+18. Implement `get_summary` tool (spending by category/period)
+19. Implement `set_budget`, `get_budget_status`, and `delete_budget` tools
+20. Implement `set_currency` tool
+21. Write integration tests + E2E MCP protocol tests for all tools
 
 ## Optional later tasks
 
@@ -911,7 +923,7 @@ mcp-money/
 | Auto-migration on startup | Zero friction for users, critical for adoption |
 | **No accounts in MVP** | Simplifies schema and tools. Can add later as optional FK. |
 | **Tags in MVP** | Lightweight many-to-many. Flexible labeling beyond rigid categories. |
-| **11 tools + health_check + set_currency** | Minimum to be useful without account complexity, with tag support |
+| **16 tools total** | CRUD for all entities + summary + budget status + set_currency + health_check |
 | Negative amounts for expenses | Simpler math, LLM handles presentation |
 | UUID v7 for IDs | Time-sortable, no sequence conflicts |
 | `mcp_money` schema | Isolation without requiring dedicated database |

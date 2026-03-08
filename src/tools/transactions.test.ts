@@ -217,9 +217,10 @@ describe("list_transactions", () => {
   });
 
   test("filters by date range", async () => {
+    // Use date-only strings since date_to adds one day for inclusive behavior
     const result = await callTool("list_transactions", {
-      date_from: "2026-03-01T00:00:00Z",
-      date_to: "2026-03-01T23:59:59Z",
+      date_from: "2026-03-01",
+      date_to: "2026-03-01",
     });
     const txs = parseText(result) as Array<{ date: string }>;
     expect(txs.length).toBeGreaterThan(0);
@@ -228,8 +229,8 @@ describe("list_transactions", () => {
       expect(d.getTime()).toBeGreaterThanOrEqual(
         new Date("2026-03-01T00:00:00Z").getTime(),
       );
-      expect(d.getTime()).toBeLessThanOrEqual(
-        new Date("2026-03-01T23:59:59Z").getTime(),
+      expect(d.getTime()).toBeLessThan(
+        new Date("2026-03-02T00:00:00Z").getTime(),
       );
     }
   });

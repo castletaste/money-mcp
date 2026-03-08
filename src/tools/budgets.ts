@@ -131,8 +131,8 @@ export function registerBudgetTools(server: McpServer, db: Database) {
         month = parseInt(parts[1], 10);
       } else {
         const now = new Date();
-        year = now.getFullYear();
-        month = now.getMonth() + 1;
+        year = now.getUTCFullYear();
+        month = now.getUTCMonth() + 1;
       }
 
       const monthStart = new Date(Date.UTC(year, month - 1, 1));

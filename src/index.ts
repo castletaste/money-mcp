@@ -17,7 +17,8 @@ try {
   const transport = new StdioServerTransport();
   await server.connect(transport);
 
-  log("Server connected via stdio transport");
+  log("Server disconnected, cleaning up");
+  await sql.end();
 } catch (error) {
   log(`Fatal error: ${error instanceof Error ? error.message : String(error)}`);
   process.exit(1);

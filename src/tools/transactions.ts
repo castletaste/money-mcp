@@ -110,7 +110,13 @@ export function registerTransactionTools(server: McpServer, db: Database) {
         .number()
         .positive()
         .describe(
-          "Transaction amount (always positive; sign is determined by category type)",
+          "Transaction amount (always positive; sign is determined by category type or explicit type param)",
+        ),
+      type: z
+        .enum(["expense", "income"])
+        .optional()
+        .describe(
+          "Transaction type. Overrides category type for sign convention. Required when no category_id is provided and transaction is income.",
         ),
       currency: z
         .string()
@@ -159,9 +165,10 @@ export function registerTransactionTools(server: McpServer, db: Database) {
         categoryType = cat[0].type;
       }
 
-      // Expense = negative, income = positive
+      // Explicit type param overrides category type for sign convention
+      const effectiveType = params.type ?? categoryType ?? "expense";
       const signedAmount =
-        categoryType === "income" ? params.amount : -params.amount;
+        effectiveType === "income" ? params.amount : -params.amount;
 
       const txDate = params.date ? new Date(params.date) : new Date();
       const id = uuidv7();
@@ -245,7 +252,7 @@ export function registerTransactionTools(server: McpServer, db: Database) {
         );
       }
 
-      // If filtering by tag, get transaction IDs that have the tag
+      // If filtering by tag, use a subquery to avoid loading all IDs into memory
       if (params.tag) {
         const tagRow = await db
           .select({ id: tags.id })
@@ -261,23 +268,13 @@ export function registerTransactionTools(server: McpServer, db: Database) {
           };
         }
 
-        const txIds = await db
-          .select({ transactionId: transactionTags.transactionId })
-          .from(transactionTags)
-          .where(eq(transactionTags.tagId, tagRow[0].id));
-
-        if (txIds.length === 0) {
-          return {
-            content: [
-              { type: "text" as const, text: JSON.stringify([], null, 2) },
-            ],
-          };
-        }
-
         conditions.push(
           inArray(
             transactions.id,
-            txIds.map((r) => r.transactionId),
+            db
+              .select({ id: transactionTags.transactionId })
+              .from(transactionTags)
+              .where(eq(transactionTags.tagId, tagRow[0].id)),
           ),
         );
       }
@@ -435,11 +432,12 @@ export function registerTransactionTools(server: McpServer, db: Database) {
             categoryType === "income" ? params.amount : -params.amount;
           updates.amount = signedAmount.toFixed(4);
         } else if (params.category_id !== undefined) {
-          // Category changed but amount not provided - re-sign the existing amount
-          const absAmount = Math.abs(Number(existing[0].amount));
-          const signedAmount =
-            categoryType === "income" ? absAmount : -absAmount;
-          updates.amount = signedAmount.toFixed(4);
+          // Category changed but amount not provided - re-sign using string ops to avoid float precision loss
+          const rawAmount = existing[0].amount;
+          const absStr = rawAmount.startsWith("-")
+            ? rawAmount.slice(1)
+            : rawAmount;
+          updates.amount = categoryType === "income" ? absStr : `-${absStr}`;
         }
       }
 

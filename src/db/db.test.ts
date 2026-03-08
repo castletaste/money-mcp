@@ -3,11 +3,10 @@ import postgres from "postgres";
 import { migrate } from "./migrate.js";
 import { seed, DEFAULT_CATEGORIES } from "./seed.js";
 
-const TEST_SCHEMA = `mcp_money_test_${Date.now()}`;
+const TEST_SCHEMA = process.env.MCP_MONEY_SCHEMA!;
 let sql: postgres.Sql;
 
 beforeAll(() => {
-  process.env.MCP_MONEY_SCHEMA = TEST_SCHEMA;
   sql = postgres(process.env.DATABASE_URL!);
 });
 
@@ -51,7 +50,6 @@ describe("migrate", () => {
     const rows = await sql.unsafe(
       `SELECT version FROM "${TEST_SCHEMA}".schema_version ORDER BY applied_at`,
     );
-    // Should still have just one version row (didn't re-apply)
     expect(rows.length).toBe(1);
   });
 

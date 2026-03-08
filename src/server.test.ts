@@ -7,11 +7,10 @@ import { createMcpServer } from "./server.js";
 import { migrate } from "./db/migrate.js";
 import { seed } from "./db/seed.js";
 
-const TEST_SCHEMA = `mcp_money_server_test_${Date.now()}`;
+const TEST_SCHEMA = process.env.MCP_MONEY_SCHEMA!;
 let sql: postgres.Sql;
 
 beforeAll(async () => {
-  process.env.MCP_MONEY_SCHEMA = TEST_SCHEMA;
   sql = postgres(process.env.DATABASE_URL!);
   await migrate(sql);
   await seed(sql);
@@ -31,7 +30,6 @@ describe("MCP server", () => {
   test("connects via InMemoryTransport and lists registered tools", async () => {
     const server = createMcpServer();
 
-    // Register a test tool to verify tool listing works
     server.tool(
       "test_tool",
       "A test tool",

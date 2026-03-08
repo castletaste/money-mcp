@@ -2,6 +2,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createConnection, type Database } from "./db/connection.js";
 import { migrate } from "./db/migrate.js";
 import { seed } from "./db/seed.js";
+import { registerCategoryTools } from "./tools/categories.js";
 import { log, debug } from "./lib/logger.js";
 import type postgres from "postgres";
 
@@ -43,7 +44,8 @@ export async function startServer(): Promise<ServerContext> {
   // Create MCP server
   const server = createMcpServer();
 
-  // TODO: Register tools here in subsequent tasks
+  // Register tools
+  registerCategoryTools(server, db);
 
   log(`mcp-money server v${pkg.version} ready`);
 

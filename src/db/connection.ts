@@ -3,7 +3,13 @@ import postgres from "postgres";
 import * as schemaExports from "./schema.js";
 
 export function getSchemaName(): string {
-  return process.env.MCP_MONEY_SCHEMA ?? "mcp_money";
+  const name = process.env.MCP_MONEY_SCHEMA ?? "mcp_money";
+  if (!/^[a-zA-Z_][a-zA-Z0-9_]*$/.test(name)) {
+    throw new Error(
+      `Invalid schema name: "${name}". Must match [a-zA-Z_][a-zA-Z0-9_]*`,
+    );
+  }
+  return name;
 }
 
 export function getConnectionString(): string {

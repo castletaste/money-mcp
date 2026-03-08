@@ -24,9 +24,12 @@ export function registerUtilTools(server: McpServer, db: Database) {
       const code = currency.toUpperCase();
 
       await db
-        .update(settings)
-        .set({ value: code })
-        .where(eq(settings.key, "default_currency"));
+        .insert(settings)
+        .values({ key: "default_currency", value: code })
+        .onConflictDoUpdate({
+          target: settings.key,
+          set: { value: code },
+        });
 
       return {
         content: [

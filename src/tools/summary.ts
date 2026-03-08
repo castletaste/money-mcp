@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { and, gte, lte, eq, sql as dsql } from "drizzle-orm";
+import { and, gte, lt, eq, sql as dsql } from "drizzle-orm";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Database } from "../db/connection.js";
 import { transactions, categories } from "../db/schema.js";
@@ -20,9 +20,13 @@ export function registerSummaryTools(server: McpServer, db: Database) {
         .describe("Filter by category ID"),
     },
     async (params) => {
+      // Add one day to date_to to make end date inclusive of the full day
+      const endDate = new Date(params.date_to);
+      endDate.setDate(endDate.getDate() + 1);
+
       const conditions = [
         gte(transactions.date, new Date(params.date_from)),
-        lte(transactions.date, new Date(params.date_to)),
+        lt(transactions.date, endDate),
       ];
 
       if (params.category_id) {

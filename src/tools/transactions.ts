@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { eq, and, gte, lte, sql as dsql, desc, inArray } from "drizzle-orm";
+import { eq, and, gte, lt, sql as dsql, desc, inArray } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Database } from "../db/connection.js";
@@ -23,21 +23,20 @@ async function resolveTagIds(
   db: Database,
   tagNames: string[],
 ): Promise<string[]> {
-  const tagIds: string[] = [];
+  // Insert all tags with ON CONFLICT to handle concurrent requests
   for (const name of tagNames) {
-    const existing = await db
-      .select({ id: tags.id })
-      .from(tags)
-      .where(eq(tags.name, name));
-    if (existing.length > 0) {
-      tagIds.push(existing[0].id);
-    } else {
-      const id = uuidv7();
-      await db.insert(tags).values({ id, name });
-      tagIds.push(id);
-    }
+    await db
+      .insert(tags)
+      .values({ id: uuidv7(), name })
+      .onConflictDoNothing({ target: tags.name });
   }
-  return tagIds;
+  // Batch-fetch all tag IDs
+  const rows = await db
+    .select({ id: tags.id, name: tags.name })
+    .from(tags)
+    .where(inArray(tags.name, tagNames));
+  const nameToId = new Map(rows.map((r) => [r.name, r.id]));
+  return tagNames.map((n) => nameToId.get(n)!);
 }
 
 async function linkTags(
@@ -85,6 +84,9 @@ async function fetchTransactionWithDetails(
     .where(eq(transactions.id, txId));
 
   const tx = rows[0];
+  if (!tx) {
+    throw new Error(`Transaction not found: ${txId}`);
+  }
 
   const tagRows = await db
     .select({ id: tags.id, name: tags.name })
@@ -224,7 +226,10 @@ export function registerTransactionTools(server: McpServer, db: Database) {
         conditions.push(gte(transactions.date, new Date(params.date_from)));
       }
       if (params.date_to) {
-        conditions.push(lte(transactions.date, new Date(params.date_to)));
+        // Add one day to make end date inclusive of the full day
+        const endDate = new Date(params.date_to);
+        endDate.setDate(endDate.getDate() + 1);
+        conditions.push(lt(transactions.date, endDate));
       }
       if (params.category_id) {
         conditions.push(eq(transactions.categoryId, params.category_id));

@@ -134,11 +134,9 @@ export function registerBudgetTools(server: McpServer, db: Database) {
       const monthStart = new Date(Date.UTC(year, month - 1, 1));
       const monthEnd = new Date(Date.UTC(year, month, 1));
 
-      // Get budgets matching the queried month
-      const monthStartStr = `${year}-${String(month).padStart(2, "0")}-01`;
-      const nextMonth = month === 12 ? 1 : month + 1;
-      const nextYear = month === 12 ? year + 1 : year;
-      const monthEndStr = `${nextYear}-${String(nextMonth).padStart(2, "0")}-01`;
+      // Derive string boundaries from the Date objects
+      const monthStartStr = monthStart.toISOString().slice(0, 10);
+      const monthEndStr = monthEnd.toISOString().slice(0, 10);
 
       const budgetConditions = [
         gte(budgets.startDate, monthStartStr),

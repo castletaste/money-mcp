@@ -197,7 +197,7 @@ export function registerBudgetTools(server: McpServer, db: Database) {
         .select({
           categoryId: transactions.categoryId,
           currency: transactions.currency,
-          totalSpent: dsql<string>`sum(${transactions.amount})`,
+          totalSpent: dsql<string>`sum(abs(${transactions.amount}))`,
         })
         .from(transactions)
         .where(
@@ -205,6 +205,7 @@ export function registerBudgetTools(server: McpServer, db: Database) {
             inArray(transactions.categoryId, categoryIds),
             gte(transactions.date, monthStart),
             lt(transactions.date, monthEnd),
+            lt(transactions.amount, "0"),
           ),
         )
         .groupBy(transactions.categoryId, transactions.currency);
@@ -216,9 +217,7 @@ export function registerBudgetTools(server: McpServer, db: Database) {
         if (!spendingMap[row.categoryId]) {
           spendingMap[row.categoryId] = {};
         }
-        spendingMap[row.categoryId][row.currency] = Math.abs(
-          Number(row.totalSpent),
-        );
+        spendingMap[row.categoryId][row.currency] = Number(row.totalSpent);
       }
 
       // Build status for each budget

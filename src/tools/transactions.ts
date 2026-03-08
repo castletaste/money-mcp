@@ -173,7 +173,6 @@ export function registerTransactionTools(server: McpServer, db: Database) {
       const signedAmount =
         effectiveType === "income" ? params.amount : -params.amount;
 
-      const txDate = params.date ? new Date(params.date) : new Date();
       if (params.date && !isValidISODate(params.date)) {
         return {
           isError: true,
@@ -182,6 +181,7 @@ export function registerTransactionTools(server: McpServer, db: Database) {
           ],
         };
       }
+      const txDate = params.date ? new Date(params.date) : new Date();
       const id = uuidv7();
 
       await db.transaction(async (tx) => {
@@ -233,8 +233,9 @@ export function registerTransactionTools(server: McpServer, db: Database) {
         .number()
         .int()
         .positive()
+        .max(1000)
         .optional()
-        .describe("Max number of results (default 50)"),
+        .describe("Max number of results (default 50, max 1000)"),
       offset: z
         .number()
         .int()
@@ -246,7 +247,6 @@ export function registerTransactionTools(server: McpServer, db: Database) {
       const conditions = [];
 
       if (params.date_from) {
-        const fromDate = new Date(params.date_from);
         if (!isValidISODate(params.date_from)) {
           return {
             isError: true,
@@ -258,10 +258,10 @@ export function registerTransactionTools(server: McpServer, db: Database) {
             ],
           };
         }
+        const fromDate = new Date(params.date_from);
         conditions.push(gte(transactions.date, fromDate));
       }
       if (params.date_to) {
-        const toDate = new Date(params.date_to);
         if (!isValidISODate(params.date_to)) {
           return {
             isError: true,
@@ -273,6 +273,7 @@ export function registerTransactionTools(server: McpServer, db: Database) {
             ],
           };
         }
+        const toDate = new Date(params.date_to);
         // For date-only inputs, normalize to start of next UTC day to include the full day.
         // For datetime inputs, honor the exact timestamp (inclusive).
         if (/^\d{4}-\d{2}-\d{2}$/.test(params.date_to)) {
@@ -523,7 +524,6 @@ export function registerTransactionTools(server: McpServer, db: Database) {
         updates.description = params.description;
       }
       if (params.date !== undefined) {
-        const d = new Date(params.date);
         if (!isValidISODate(params.date)) {
           return {
             isError: true,
@@ -532,7 +532,7 @@ export function registerTransactionTools(server: McpServer, db: Database) {
             ],
           };
         }
-        updates.date = d;
+        updates.date = new Date(params.date);
       }
       if (params.metadata !== undefined) {
         updates.metadata = params.metadata;

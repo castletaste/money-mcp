@@ -4,11 +4,14 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { startServer } from "./server.js";
 import { log } from "./lib/logger.js";
 
+let sql: Awaited<ReturnType<typeof startServer>>["sql"] | undefined;
 try {
-  const { server, sql } = await startServer();
+  const started = await startServer();
+  sql = started.sql;
+  const { server } = started;
 
   const shutdown = async () => {
-    await sql.end();
+    await sql!.end();
     process.exit(0);
   };
   process.on("SIGTERM", shutdown);
@@ -21,5 +24,6 @@ try {
   await sql.end();
 } catch (error) {
   log(`Fatal error: ${error instanceof Error ? error.message : String(error)}`);
+  if (sql) await sql.end();
   process.exit(1);
 }

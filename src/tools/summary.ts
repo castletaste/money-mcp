@@ -21,7 +21,6 @@ export function registerSummaryTools(server: McpServer, db: Database) {
         .describe("Filter by category ID"),
     },
     async (params) => {
-      const fromDate = new Date(params.date_from);
       if (!isValidISODate(params.date_from)) {
         return {
           isError: true,
@@ -33,7 +32,6 @@ export function registerSummaryTools(server: McpServer, db: Database) {
           ],
         };
       }
-      const toDate = new Date(params.date_to);
       if (!isValidISODate(params.date_to)) {
         return {
           isError: true,
@@ -45,6 +43,8 @@ export function registerSummaryTools(server: McpServer, db: Database) {
           ],
         };
       }
+      const fromDate = new Date(params.date_from);
+      const toDate = new Date(params.date_to);
       // For date-only inputs, normalize to start of next UTC day to include the full day.
       // For datetime inputs, honor the exact timestamp (inclusive).
       const dateCondition = /^\d{4}-\d{2}-\d{2}$/.test(params.date_to)

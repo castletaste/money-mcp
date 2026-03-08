@@ -230,7 +230,9 @@ export function registerTransactionTools(server: McpServer, db: Database) {
         conditions.push(eq(transactions.categoryId, params.category_id));
       }
       if (params.currency) {
-        conditions.push(eq(transactions.currency, params.currency));
+        conditions.push(
+          eq(transactions.currency, params.currency.toUpperCase()),
+        );
       }
 
       // If filtering by tag, get transaction IDs that have the tag
@@ -435,7 +437,7 @@ export function registerTransactionTools(server: McpServer, db: Database) {
         updates.categoryId = params.category_id;
       }
       if (params.currency !== undefined) {
-        updates.currency = params.currency;
+        updates.currency = params.currency.toUpperCase();
       }
       if (params.description !== undefined) {
         updates.description = params.description;

@@ -3,7 +3,7 @@ import { eq } from "drizzle-orm";
 import { v7 as uuidv7 } from "uuid";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import type { Database } from "../db/connection.js";
-import { tags, transactionTags } from "../db/schema.js";
+import { tags } from "../db/schema.js";
 
 export function registerTagTools(server: McpServer, db: Database) {
   // --- list_tags ---

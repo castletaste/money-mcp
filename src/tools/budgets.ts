@@ -39,14 +39,18 @@ export function registerBudgetTools(server: McpServer, db: Database) {
         };
       }
 
-      // Check if budget already exists for this category + start_date
+      // Normalize start_date to first of the month to enforce one budget per category per month
+      const parsedDate = new Date(params.start_date);
+      const normalizedStartDate = `${parsedDate.getUTCFullYear()}-${String(parsedDate.getUTCMonth() + 1).padStart(2, "0")}-01`;
+
+      // Check if budget already exists for this category in the same month
       const [existing] = await db
         .select({ id: budgets.id })
         .from(budgets)
         .where(
           and(
             eq(budgets.categoryId, params.category_id),
-            eq(budgets.startDate, params.start_date),
+            eq(budgets.startDate, normalizedStartDate),
           ),
         )
         .limit(1);
@@ -80,7 +84,7 @@ export function registerBudgetTools(server: McpServer, db: Database) {
         categoryId: params.category_id,
         amount: params.amount.toFixed(4),
         period: "monthly",
-        startDate: params.start_date,
+        startDate: normalizedStartDate,
       });
 
       const [created] = await db

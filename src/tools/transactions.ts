@@ -11,6 +11,9 @@ import {
   settings,
 } from "../db/schema.js";
 
+// Type that accepts both Database and PgTransaction for use in helpers
+type QueryRunner = Pick<Database, "insert" | "select" | "update" | "delete">;
+
 async function getDefaultCurrency(db: Database): Promise<string> {
   const row = await db
     .select({ value: settings.value })
@@ -20,7 +23,7 @@ async function getDefaultCurrency(db: Database): Promise<string> {
 }
 
 async function resolveTagIds(
-  db: Database,
+  db: QueryRunner,
   tagNames: string[],
 ): Promise<string[]> {
   // Insert all tags with ON CONFLICT to handle concurrent requests
@@ -40,7 +43,7 @@ async function resolveTagIds(
 }
 
 async function linkTags(
-  db: Database,
+  db: QueryRunner,
   transactionId: string,
   tagIds: string[],
 ): Promise<void> {
@@ -163,21 +166,23 @@ export function registerTransactionTools(server: McpServer, db: Database) {
       const txDate = params.date ? new Date(params.date) : new Date();
       const id = uuidv7();
 
-      await db.insert(transactions).values({
-        id,
-        categoryId: params.category_id ?? null,
-        amount: signedAmount.toFixed(4),
-        currency,
-        description: params.description ?? null,
-        date: txDate,
-        metadata: params.metadata ?? {},
-      });
+      await db.transaction(async (tx) => {
+        await tx.insert(transactions).values({
+          id,
+          categoryId: params.category_id ?? null,
+          amount: signedAmount.toFixed(4),
+          currency,
+          description: params.description ?? null,
+          date: txDate,
+          metadata: params.metadata ?? {},
+        });
 
-      // Resolve and link tags
-      if (params.tags && params.tags.length > 0) {
-        const tagIds = await resolveTagIds(db, params.tags);
-        await linkTags(db, id, tagIds);
-      }
+        // Resolve and link tags
+        if (params.tags && params.tags.length > 0) {
+          const tagIds = await resolveTagIds(tx, params.tags);
+          await linkTags(tx, id, tagIds);
+        }
+      });
 
       const result = await fetchTransactionWithDetails(db, id);
 
@@ -461,25 +466,27 @@ export function registerTransactionTools(server: McpServer, db: Database) {
         updates.updatedAt = new Date();
       }
 
-      if (Object.keys(updates).length > 0) {
-        await db
-          .update(transactions)
-          .set(updates)
-          .where(eq(transactions.id, params.id));
-      }
-
-      // Replace tags if provided
-      if (params.tags !== undefined) {
-        // Delete existing tag associations
-        await db
-          .delete(transactionTags)
-          .where(eq(transactionTags.transactionId, params.id));
-
-        if (params.tags.length > 0) {
-          const tagIds = await resolveTagIds(db, params.tags);
-          await linkTags(db, params.id, tagIds);
+      await db.transaction(async (tx) => {
+        if (Object.keys(updates).length > 0) {
+          await tx
+            .update(transactions)
+            .set(updates)
+            .where(eq(transactions.id, params.id));
         }
-      }
+
+        // Replace tags if provided
+        if (params.tags !== undefined) {
+          // Delete existing tag associations
+          await tx
+            .delete(transactionTags)
+            .where(eq(transactionTags.transactionId, params.id));
+
+          if (params.tags.length > 0) {
+            const tagIds = await resolveTagIds(tx, params.tags);
+            await linkTags(tx, params.id, tagIds);
+          }
+        }
+      });
 
       const result = await fetchTransactionWithDetails(db, params.id);
 

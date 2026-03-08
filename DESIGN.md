@@ -114,11 +114,12 @@
 | **accounts** | ~~Yes~~ **No** | Low | Medium — deferred, simplifies MVP |
 | **categories** | Yes | Low-Med | High |
 | **budgets** | Yes (basic) | Medium | High |
+| **tags** | Yes | Low | Medium — flexible labeling beyond categories |
+| **transaction_tags** | Yes | Low | Junction table for many-to-many |
 | **recurring_transactions** | No | High | Medium |
-| **tags** | No | Low | Low-Medium |
 | **currencies** | No | High | Medium |
 
-> **Decision**: Accounts removed from MVP. Transactions stand alone. If needed later, accounts can be added as an optional FK on transactions.
+> **Decision**: Accounts removed from MVP. Tags added — lightweight many-to-many via junction table.
 
 ### Schema variants
 
@@ -129,7 +130,7 @@
 | **C. Normalized + JSONB** | B + JSONB `metadata` column on transactions for extensibility | 6/10 | 9/10 | 7/10 |
 | **D. Event-sourced** | Append-only events, materialized views for balances | 3/10 | 10/10 | 5/10 |
 
-### ✅ Final MVP schema (Variant B, no accounts)
+### ✅ Final MVP schema (Variant B, no accounts, with tags)
 
 ```
 mcp_money.categories
@@ -137,6 +138,11 @@ mcp_money.categories
   name        text NOT NULL UNIQUE
   parent_id   uuid FK -> categories(id)  -- one level of nesting max
   type        text NOT NULL  -- 'expense', 'income'
+  created_at  timestamptz
+
+mcp_money.tags
+  id          uuid PK
+  name        text NOT NULL UNIQUE
   created_at  timestamptz
 
 mcp_money.transactions
@@ -150,6 +156,11 @@ mcp_money.transactions
   created_at  timestamptz
   updated_at  timestamptz
 
+mcp_money.transaction_tags
+  transaction_id  uuid FK -> transactions(id) ON DELETE CASCADE
+  tag_id          uuid FK -> tags(id) ON DELETE CASCADE
+  PRIMARY KEY (transaction_id, tag_id)
+
 mcp_money.budgets
   id          uuid PK
   category_id uuid FK -> categories(id)
@@ -161,10 +172,11 @@ mcp_money.budgets
 
 ### Decision
 
-- **MVP**: Variant B — 3 tables: categories, transactions, budgets. No accounts table.
+- **MVP**: 5 tables: categories, tags, transactions, transaction_tags, budgets. No accounts table.
+- **Tags**: Many-to-many via junction table. Tags are flat (no hierarchy). Created on-the-fly when used in `add_transaction` or via `create_tag`.
 - **Currency column** kept on transactions for future multi-currency expansion (section 10).
-- **Defer**: accounts, tags (use metadata jsonb for now), recurring_transactions, multi-currency conversion.
-- **Critical**: Use `numeric(19,4)` for money, never float. Use UUID v7 for time-sortable IDs. Use `date` not `timestamp` for transaction dates (you don't need sub-day precision for "I bought coffee").
+- **Defer**: accounts, recurring_transactions, multi-currency conversion.
+- **Critical**: Use `numeric(19,4)` for money, never float. UUID v7 for time-sortable IDs. `date` not `timestamp` for transaction dates.
 - **Convention**: Negative amounts = expense, positive = income. This is simpler than separate `type` + positive amount.
 
 **Why no sign convention debate?** Because the MCP tool layer will handle `add_expense(amount: 50)` → stores as `-50`. Users never see the sign. The LLM handles presentation.
@@ -235,19 +247,21 @@ All of C, plus transfer_between_accounts, set_goal, get_forecast, add_tag, merge
 
 **Critical take**: Every tool you add is a tool the LLM has to understand and choose from. More tools = more token usage per call = slower responses = worse UX. Keep the tool list tight.
 
-### ✅ Decision: Variant B adapted — 9 tools (no accounts)
+### ✅ Decision: Variant B adapted — 11 tools (no accounts, with tags)
 
-Since accounts are removed from MVP, the final tool list:
+Since accounts are removed and tags added, the final tool list:
 
 | Tool | Purpose |
 |------|---------|
-| `add_transaction` | Log expense or income |
-| `list_transactions` | Query with filters (date range, category, limit) |
-| `update_transaction` | Edit existing transaction |
+| `add_transaction` | Log expense or income (accepts optional tags) |
+| `list_transactions` | Query with filters (date range, category, tag, limit) |
+| `update_transaction` | Edit existing transaction (including tags) |
 | `delete_transaction` | Remove a transaction |
 | `get_summary` | Spending by category for a period, totals, averages |
 | `list_categories` | Show available categories |
 | `create_category` | Add custom category |
+| `list_tags` | Show all tags |
+| `create_tag` | Add a new tag |
 | `set_budget` | Set monthly budget for category |
 | `get_budget_status` | Check budget vs actual spending |
 | `set_currency` | Change default currency for new transactions |
@@ -270,6 +284,10 @@ Since accounts are removed from MVP, the final tool list:
 | **C. Hierarchical categories** | Parent/child (Food > Restaurants, Groceries) | 5/10 | 8/10 |
 
 **✅ Decision**: **B for MVP but fewer presets** — seed ~10 defaults (Groceries, Restaurants, Transport, Entertainment, Utilities, Rent, Salary, Healthcare, Shopping, Other). Allow users to add custom ones via `create_category` tool. One level of nesting max (parent_id), but don't enforce hierarchy in v1 — just support it in schema.
+
+### Tags
+
+Tags provide flexible cross-cutting labels beyond rigid categories. A transaction can have multiple tags (e.g. "business-trip", "reimbursable"). Tags are created on-the-fly when first used in `add_transaction`, or explicitly via `create_tag`. No presets — purely user-defined.
 
 ### Budgets
 
@@ -580,11 +598,11 @@ and it's stored in your PostgreSQL database — with categories, budgets, and sp
 | Aspect | Decision |
 |--------|----------|
 | **Positioning** | B — Expense tracker for AI assistants |
-| **MVP scope** | B adapted — Transactions + categories + summaries + basic budgets (9 tools + health_check + set_currency). **No accounts.** |
+| **MVP scope** | B adapted — Transactions + categories + tags + summaries + basic budgets (11 tools + health_check + set_currency). **No accounts.** |
 | **Runtime** | C — Bun-primary, Node-compatible (no Bun-specific APIs in production code) |
 | **MCP transport** | A — stdio only via `@modelcontextprotocol/sdk` |
 | **Database** | A — PostgreSQL only, via Drizzle ORM + postgres.js driver |
-| **Schema** | B — 3 tables: categories, transactions, budgets. All in `mcp_money` schema. Currency column kept for future expansion. |
+| **Schema** | B — 5 tables: categories, tags, transactions, transaction_tags, budgets. All in `mcp_money` schema. Currency column kept for future expansion. |
 | **Migrations** | B — Auto-migrate on startup with version tracking |
 | **Config** | A+C — `DATABASE_URL` required. `MCP_MONEY_SCHEMA` optional env var. **Currency changed via `set_currency` tool**, not env var. |
 | **Testing** | C — Integration tests + E2E MCP protocol tests via `bun test` |
@@ -798,7 +816,7 @@ mcp-money/
 │   ├── config.ts             # env var parsing and validation
 │   ├── db/
 │   │   ├── connection.ts     # postgres.js connection
-│   │   ├── schema.ts         # Drizzle table definitions (3 tables)
+│   │   ├── schema.ts         # Drizzle table definitions (5 tables)
 │   │   ├── migrate.ts        # auto-migration runner
 │   │   ├── seed.ts           # default categories (~10)
 │   │   └── migrations/       # numbered SQL files
@@ -808,6 +826,7 @@ mcp-money/
 │       ├── index.ts          # tool registry
 │       ├── transactions.ts   # add, list, update, delete
 │       ├── categories.ts     # list, create
+│       ├── tags.ts           # list, create
 │       ├── budgets.ts        # set, get_status
 │       ├── summary.ts        # get_summary
 │       ├── settings.ts       # set_currency
@@ -839,7 +858,7 @@ mcp-money/
 2. Configure tsconfig.json for ESM + both runtimes
 3. Create docker-compose.yml with PostgreSQL 16
 4. Implement `src/config.ts` — parse DATABASE_URL and optional env vars
-5. Define Drizzle schema in `src/db/schema.ts` — 3 tables (categories, transactions, budgets)
+5. Define Drizzle schema in `src/db/schema.ts` — 5 tables (categories, tags, transactions, transaction_tags, budgets)
 6. Implement `src/db/connection.ts` — postgres.js connection pool
 7. Implement `src/db/migrate.ts` — auto-migration with version tracking
 8. Write `src/db/migrations/001_initial.sql` — create schema and tables
@@ -854,6 +873,7 @@ mcp-money/
 14. Implement `list_transactions` tool with filters
 15. Implement `update_transaction` and `delete_transaction` tools
 16. Implement `list_categories` and `create_category` tools
+16b. Implement `list_tags` and `create_tag` tools
 17. Implement `get_summary` tool (spending by category/period)
 18. Implement `set_budget` and `get_budget_status` tools
 19. Implement `set_currency` tool
@@ -869,8 +889,7 @@ mcp-money/
 26. Submit to awesome-mcp-servers
 27. Add accounts support (optional FK on transactions)
 28. Add recurring transactions
-29. Add tags support (via metadata jsonb or dedicated table)
-30. Add CSV export tool
+29. Add CSV export tool
 31. Add spending trends tool
 32. Add multi-currency conversion with external rates API
 33. Add SQLite support via Drizzle dialect
@@ -889,7 +908,8 @@ mcp-money/
 | stdio-only MCP | 95% of MCP usage is stdio, HTTP is premature |
 | Auto-migration on startup | Zero friction for users, critical for adoption |
 | **No accounts in MVP** | Simplifies schema and tools. Can add later as optional FK. |
-| **9 tools + health_check + set_currency** | Minimum to be useful without account complexity |
+| **Tags in MVP** | Lightweight many-to-many. Flexible labeling beyond rigid categories. |
+| **11 tools + health_check + set_currency** | Minimum to be useful without account complexity, with tag support |
 | Negative amounts for expenses | Simpler math, LLM handles presentation |
 | UUID v7 for IDs | Time-sortable, no sequence conflicts |
 | `mcp_money` schema | Isolation without requiring dedicated database |
@@ -924,7 +944,6 @@ mcp-money/
 |---------|------|---------|
 | **Accounts** | v1.1 | User demand for separating cash/bank/card |
 | Recurring transactions | v1.1 | User demand |
-| Tags | v1.1 | User demand |
 | Multi-currency conversion | v1.2 | User demand + good rate API found |
 | CSV import/export | v1.1 | Obvious early request |
 | Spending trends | v1.2 | After summaries prove useful |
